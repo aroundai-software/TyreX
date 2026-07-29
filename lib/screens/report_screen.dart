@@ -19,7 +19,10 @@ import 'package:csv/csv.dart';
 import 'package:universal_html/html.dart' as html;
 import '../providers/report_provider.dart';
 import '../providers/admin_settings_provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../services/local_media_service.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
 
 // Assuming DamagePainter is in a shared file or defined elsewhere.
 // If not, you can copy the DamagePainter class from job_card_screen.dart to here.
@@ -531,6 +534,171 @@ class _ReportScreenState extends State<ReportScreen> {
     );
   }
 
+  void _showWarrantyDialog(String? barcodeJson) {
+    if (barcodeJson == null || barcodeJson.isEmpty || barcodeJson == '{}') {
+      _showErrorSnackBar('No warranty QR codes recorded.');
+      return;
+    }
+    Map<String, dynamic> barcodeData = {};
+    try {
+      barcodeData = jsonDecode(barcodeJson) as Map<String, dynamic>;
+    } catch (e) {
+      _showErrorSnackBar('Could not parse warranty data.');
+      return;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Warranty QRs'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: barcodeData.length,
+            itemBuilder: (context, index) {
+              String position = barcodeData.keys.elementAt(index);
+              Map<String, dynamic> details = barcodeData[position] as Map<String, dynamic>;
+              String qr = details['qr'] ?? '';
+              String spec = details['spec'] ?? '';
+              
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      position,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    if (spec.isNotEmpty)
+                      Text('Spec: $spec', style: const TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    if (qr.isNotEmpty)
+                      Center(
+                        child: QrImageView(
+                          data: qr,
+                          version: QrVersions.auto,
+                          size: 150.0,
+                          backgroundColor: Colors.white,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'))
+        ],
+      ),
+    );
+  }
+
+  Future<void> _shareWarrantyPDF(Map<String, dynamic> report) async {
+    final barcodeJson = report['barcode'] as String?;
+    if (barcodeJson == null || barcodeJson.isEmpty || barcodeJson == '{}') {
+      _showErrorSnackBar('No warranty QR codes recorded.');
+      return;
+    }
+
+    Map<String, dynamic> barcodeData = {};
+    try {
+      barcodeData = jsonDecode(barcodeJson) as Map<String, dynamic>;
+    } catch (e) {
+      _showErrorSnackBar('Could not parse warranty data.');
+      return;
+    }
+
+    final String jobIdStr = (report['job_card_id']?.toString().isNotEmpty == true) 
+        ? report['job_card_id'].toString() 
+        : report['id']?.toString() ?? 'N/A';
+    final vehicle = report['vehicles'];
+    final vehicleNo = vehicle?['Vehicle Number'] ?? 'N/A';
+    final clientName = report['Owner name'] ?? 'N/A';
+    final clientPhone = report['client_phone'] ?? 'N/A';
+
+    try {
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            return [
+              pw.Header(
+                level: 0,
+                child: pw.Text('Tyre Warranty Details', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+              pw.SizedBox(height: 20),
+              pw.Wrap(
+                spacing: 20,
+                runSpacing: 20,
+                children: barcodeData.entries.map((entry) {
+                  final position = entry.key;
+                  final details = entry.value as Map<String, dynamic>;
+                  final qr = details['qr']?.toString() ?? '';
+                  final spec = details['spec']?.toString() ?? '';
+
+                  return pw.Container(
+                    width: 200,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey),
+                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                    ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text(position, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                        pw.SizedBox(height: 5),
+                        if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 12)),
+                        pw.SizedBox(height: 10),
+                        if (qr.isNotEmpty)
+                          pw.BarcodeWidget(
+                            barcode: pw.Barcode.qrCode(),
+                            data: qr,
+                            width: 120,
+                            height: 120,
+                          ),
+                        if (qr.isNotEmpty)
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.only(top: 8),
+                            child: pw.Text(qr, style: const pw.TextStyle(fontSize: 8)),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ];
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      final dir = await getTemporaryDirectory();
+      final file = io.File('${dir.path}/job_${jobIdStr}_warranty_qrs.pdf');
+      await file.writeAsBytes(bytes);
+
+      final String message = 'Warranty details for Job $jobIdStr (Vehicle: $vehicleNo)';
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: message,
+        subject: 'Warranty details for Job $jobIdStr',
+      );
+    } catch (e) {
+      _showErrorSnackBar('Error generating or sharing PDF: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ReportProvider>(
@@ -759,6 +927,7 @@ class _ReportScreenState extends State<ReportScreen> {
                   DataColumn2(label: Text('Feedback Text'), size: ColumnSize.L),
                   DataColumn2(label: Text('Feedback Voice'), size: ColumnSize.S),
                   DataColumn2(label: Text('Marks'), size: ColumnSize.S),
+                  DataColumn2(label: Text('Warranty'), size: ColumnSize.S),
                   DataColumn2(label: Text('Media'), size: ColumnSize.S),
                 ]);
                 
@@ -830,6 +999,12 @@ class _ReportScreenState extends State<ReportScreen> {
                             ? TextButton(
                                 onPressed: () => _showMarksDialog(report['marks']),
                                 child: const Text('View'))
+                            : const Text('N/A')),
+                    DataCell(
+                        (report['barcode'] as String?)?.isNotEmpty == true && report['barcode'] != '{}'
+                            ? TextButton(
+                                onPressed: () => _showWarrantyDialog(report['barcode']),
+                                child: const Text('View QRs'))
                             : const Text('N/A')),
                     DataCell(
                       TextButton(
@@ -968,6 +1143,12 @@ class _ReportScreenState extends State<ReportScreen> {
               centerTitle: true,
               elevation: 0,
               actions: [
+                if ((report['barcode'] as String?)?.isNotEmpty == true && report['barcode'] != '{}')
+                  IconButton(
+                    icon: const Icon(Icons.share, color: Colors.blue),
+                    onPressed: () => _shareWarrantyPDF(report),
+                    tooltip: 'Share QRs',
+                  ),
                 IconButton(
                   icon: const Icon(Icons.print, color: Colors.blue),
                   onPressed: () => _printJobCard(report),
@@ -1019,6 +1200,8 @@ class _ReportScreenState extends State<ReportScreen> {
                               context: context,
                               isFullWidthGroup: false,
                             ),
+                            if ((report['barcode'] as String?)?.isNotEmpty == true && report['barcode'] != '{}')
+                              _buildWarrantyQRSection(report['barcode'] as String),
                           ],
                         ),
                       ),
@@ -1087,6 +1270,87 @@ class _ReportScreenState extends State<ReportScreen> {
                       style: const TextStyle(color: Colors.black, fontSize: 15),
                       child: cellWidget,
                     ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWarrantyQRSection(String barcodeJson) {
+    Map<String, dynamic> barcodeData = {};
+    try {
+      barcodeData = jsonDecode(barcodeJson) as Map<String, dynamic>;
+    } catch (e) {
+      return const SizedBox.shrink();
+    }
+
+    if (barcodeData.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Warranty QRs',
+            style: TextStyle(
+              color: Colors.blueAccent,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 16.0,
+            runSpacing: 20.0,
+            children: barcodeData.entries.map((entry) {
+              final position = entry.key;
+              final details = entry.value as Map<String, dynamic>;
+              final qr = details['qr']?.toString() ?? '';
+              final spec = details['spec']?.toString() ?? '';
+
+              return SizedBox(
+                width: 150,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      position.toUpperCase(),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (spec.isNotEmpty)
+                      Text(
+                        spec,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    const SizedBox(height: 8),
+                    if (qr.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                          color: Colors.white,
+                        ),
+                        child: QrImageView(
+                          data: qr,
+                          version: QrVersions.auto,
+                          size: 130.0,
+                        ),
+                      ),
                   ],
                 ),
               );

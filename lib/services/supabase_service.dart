@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import '../models/admin_setting_model.dart';
 import '../utils/vehicle_number_utils.dart';
-import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/app_exceptions.dart';
 import '../utils/app_constants.dart';
@@ -255,7 +254,7 @@ class SupabaseService {
             client_phone, odometer_reading, "Owner name",
             customer_feedback_text, customer_feedback_audio,
             marks, gdrive_folder_url, booking_id, created_by_pudo_id,
-            inspection_remarks,
+            inspection_remarks, barcode,
             vehicles!reports_vehicle_fk(
               "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
               vehicle_models!inner(brand, "Model name")
@@ -299,7 +298,7 @@ class SupabaseService {
           .from('reports')
           .select('''
           id, job_card_id, created_at, started_at, completed_at, status, complaint,
-          client_phone, odometer_reading, "Owner name",
+          client_phone, odometer_reading, "Owner name", barcode,
           vehicles!reports_vehicle_fk(
             "Guid", "Vehicle Number", vehicle_name,
             vehicle_models!inner(brand, "Model name")
@@ -1399,6 +1398,68 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Error uploading media to Supabase Storage: $e');
       return null;
+    }
+  }
+
+  // ==========================================
+  // Tyre Catalog Methods
+  // ==========================================
+
+  Future<List<Map<String, dynamic>>> getTyreCatalog({String? companyName}) async {
+    try {
+      var query = _client.from('tyre_catalog').select();
+      if (companyName != null && companyName.isNotEmpty) {
+        query = query.eq('company_name', companyName);
+      }
+      final response = await query.order('brand').order('model').order('size');
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error fetching tyre catalog: $e');
+      }
+      return [];
+    }
+  }
+
+  Future<void> addTyreCatalogItem(String brand, String model, String size) async {
+    try {
+      final dataWithCompany = CompanyService().addCompanyFields({
+        'brand': brand,
+        'model': model,
+        'size': size,
+      }, tableName: 'tyre_catalog');
+      await _client.from('tyre_catalog').insert(dataWithCompany);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error adding tyre catalog item: $e');
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> updateTyreCatalogItem(int id, String brand, String model, String size) async {
+    try {
+      await _client.from('tyre_catalog').update({
+        'brand': brand,
+        'model': model,
+        'size': size,
+      }).eq('id', id);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error updating tyre catalog item: $e');
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> deleteTyreCatalogItem(int id) async {
+    try {
+      await _client.from('tyre_catalog').delete().eq('id', id);
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error deleting tyre catalog item: $e');
+      }
+      rethrow;
     }
   }
 

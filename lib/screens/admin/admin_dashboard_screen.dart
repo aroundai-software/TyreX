@@ -7,6 +7,7 @@ import '../../theme/app_theme.dart';
 import 'app_settings_screen.dart';
 import 'vehicle_management_screen.dart';
 import 'service_catalog_screen.dart';
+import 'tyre_catalog_screen.dart';
 import '../login_screen.dart';
 import 'user_management_screen.dart';
 import 'reports_analytics_screen.dart';
@@ -283,6 +284,17 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         onTap: () {
                           HapticUtils.light();
                           _navigateTo(context, const ServiceCatalogScreen());
+                        },
+                      ),
+                      _buildDashboardCard(
+                        context,
+                        title: 'Tyre Catalog',
+                        
+                        icon: Icons.tire_repair,
+                        color: Colors.brown,
+                        onTap: () {
+                          HapticUtils.light();
+                          _navigateTo(context, const TyreCatalogScreen());
                         },
                       ),
                       _buildDashboardCard(

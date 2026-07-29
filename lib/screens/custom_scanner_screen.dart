@@ -27,7 +27,7 @@ class _CustomScannerScreenState extends State<CustomScannerScreen> {
     final List<Barcode> barcodes = capture.barcodes;
     final Uint8List? image = capture.image;
 
-    if (barcodes.isNotEmpty && image != null) {
+    if (barcodes.isNotEmpty) {
       final barcode = barcodes.first;
       final rawValue = barcode.rawValue;
 

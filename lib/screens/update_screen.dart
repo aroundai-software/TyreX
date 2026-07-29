@@ -1368,65 +1368,63 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     try {
       final pdf = pw.Document();
 
-      pdf.addPage(
-        pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          build: (pw.Context context) {
-            return [
-              pw.Header(
-                level: 0,
-                child: pw.Text('Tyre Warranty Details', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
-              pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
-              pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
-              pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
-              pw.SizedBox(height: 20),
-              pw.Wrap(
-                spacing: 20,
-                runSpacing: 20,
-                children: barcodeData.entries.map((entry) {
-                  final position = entry.key;
-                  final details = entry.value as Map<String, dynamic>;
-                  final qr = details['qr']?.toString() ?? '';
-                  final spec = details['spec']?.toString() ?? '';
+      for (final entry in barcodeData.entries) {
+        final position = entry.key;
+        final details = entry.value as Map<String, dynamic>;
+        final hasImage = details['has_image'] == 'true';
+        final spec = details['spec']?.toString() ?? '';
 
-                  return pw.Container(
-                    width: 200,
-                    padding: const pw.EdgeInsets.all(10),
-                    decoration: pw.BoxDecoration(
-                      border: pw.Border.all(color: PdfColors.grey),
-                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+        Uint8List? imageBytes;
+        if (hasImage && _jobMediaUrls.isNotEmpty) {
+          final safePosition = position.replaceAll(" ", "_");
+          final urlStr = _jobMediaUrls.firstWhere(
+            (url) => url.contains('_tyreqr_$safePosition'), 
+            orElse: () => ''
+          );
+          if (urlStr.isNotEmpty) {
+            try {
+              final response = await http.get(Uri.parse(urlStr));
+              imageBytes = response.bodyBytes;
+            } catch (e) {
+              debugPrint('Failed to download image for PDF: $e');
+            }
+          }
+        }
+
+        pdf.addPage(
+          pw.Page(
+            pageFormat: PdfPageFormat.a4,
+            build: (pw.Context context) {
+              return pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Header(
+                    level: 0,
+                    child: pw.Text('Tyre Warranty Details - $position', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+                  ),
+                  pw.SizedBox(height: 10),
+                  pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
+                  pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+                  pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+                  pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+                  pw.SizedBox(height: 20),
+                  if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 16)),
+                  pw.SizedBox(height: 10),
+                  if (imageBytes != null)
+                    pw.Expanded(
+                      child: pw.Center(
+                        child: pw.Image(
+                          pw.MemoryImage(imageBytes),
+                          fit: pw.BoxFit.contain,
+                        ),
+                      ),
                     ),
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.center,
-                      children: [
-                        pw.Text(position, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-                        pw.SizedBox(height: 5),
-                        if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 12)),
-                        pw.SizedBox(height: 10),
-                        if (qr.isNotEmpty)
-                          pw.BarcodeWidget(
-                            barcode: pw.Barcode.qrCode(),
-                            data: qr,
-                            width: 120,
-                            height: 120,
-                          ),
-                        if (qr.isNotEmpty)
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.only(top: 8),
-                            child: pw.Text(qr, style: const pw.TextStyle(fontSize: 8)),
-                          ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ];
-          },
-        ),
-      );
+                ],
+              );
+            },
+          ),
+        );
+      }
 
       final bytes = await pdf.save();
       final dir = await getTemporaryDirectory();
@@ -3921,112 +3919,55 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                           ],
                           // Before Images
                           if (_jobMediaUrls.isNotEmpty) ...[
-                            if (_openedFromTab == 'Completed' && _afterJobMediaUrls.isNotEmpty)
-                              const Padding(
-                                padding: EdgeInsets.only(bottom: 8.0),
-                                child: Text('Before Job Pictures', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                              ),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: _jobMediaUrls.map((url) {
-                                return GestureDetector(
-                                  onTap: () => showDialog(
-                                    context: context,
-                                    builder: (context) => Dialog(
-                                      insetPadding: const EdgeInsets.all(8),
-                                      child: Stack(
-                                        children: [
-                                          Image.network(
-                                            url,
-                                            fit: BoxFit.contain,
-                                            errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)),
-                                          ),
-                                          Positioned(
-                                            top: 8,
-                                            right: 8,
-                                            child: IconButton(
-                                              icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                                              onPressed: () => Navigator.pop(context),
-                                            ),
-                                          ),
-                                        ],
+                            Builder(
+                              builder: (context) {
+                                final qrUrls = _jobMediaUrls.where((url) => url.contains('_tyreqr_')).toList();
+                                final otherUrls = _jobMediaUrls.where((url) => !url.contains('_tyreqr_')).toList();
+                                
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (qrUrls.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8.0),
+                                        child: Text('Scanned Tyre QRs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
-                                    ),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.network(
-                                      url,
-                                      width: 120,
-                                      height: 120,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) => Container(
-                                        width: 120,
-                                        height: 120,
-                                        color: Colors.grey[200],
-                                        child: const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: qrUrls.map((url) => _buildImageThumbnail(url)).toList(),
                                       ),
-                                    ),
-                                  ),
+                                      const SizedBox(height: 16),
+                                    ],
+                                    if (otherUrls.isNotEmpty) ...[
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(_openedFromTab == 'Completed' && _afterJobMediaUrls.isNotEmpty ? 'Before Job Pictures' : 'Vehicle & Wheel Photos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      ),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: otherUrls.map((url) => _buildImageThumbnail(url)).toList(),
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
+                                    // After Images
+                                    if (_afterJobMediaUrls.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8.0),
+                                        child: Text('After Job Pictures', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      ),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: _afterJobMediaUrls.map((url) => _buildImageThumbnail(url)).toList(),
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
+                                  ],
                                 );
-                              }).toList(),
-                            ),
-                            const SizedBox(height: 16),
-                          ],
-                          
-                          // After Images
-                          if (_afterJobMediaUrls.isNotEmpty) ...[
-                            const Padding(
-                              padding: EdgeInsets.only(bottom: 8.0),
-                              child: Text('After Job Pictures', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                            ),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: _afterJobMediaUrls.map((url) {
-                                return GestureDetector(
-                                  onTap: () => showDialog(
-                                    context: context,
-                                    builder: (context) => Dialog(
-                                      insetPadding: const EdgeInsets.all(8),
-                                      child: Stack(
-                                        children: [
-                                          Image.network(
-                                            url,
-                                            fit: BoxFit.contain,
-                                            errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)),
-                                          ),
-                                          Positioned(
-                                            top: 8,
-                                            right: 8,
-                                            child: IconButton(
-                                              icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                                              onPressed: () => Navigator.pop(context),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Image.network(
-                                      url,
-                                      width: 120,
-                                      height: 120,
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (context, error, stackTrace) => Container(
-                                        width: 120,
-                                        height: 120,
-                                        color: Colors.grey[200],
-                                        child: const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            ),
+                              }
+                            )
                           ],
                         ],
                       ),
@@ -4312,6 +4253,64 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       );
     }
   }
+
+  Widget _buildImageThumbnail(String url) {
+    return GestureDetector(
+      onTap: () => showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          insetPadding: const EdgeInsets.all(8),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey)),
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) return child;
+                    return const Center(child: CircularProgressIndicator());
+                  },
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          url,
+          width: 120,
+          height: 120,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => Container(
+            width: 120,
+            height: 120,
+            color: Colors.grey[200],
+            child: const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class LiveTimer extends StatefulWidget {
@@ -4368,8 +4367,7 @@ class _LiveTimerState extends State<LiveTimer> {
       style: widget.style ?? const TextStyle(
         fontSize: 15,
         fontWeight: FontWeight.w700,
-        color: Color(0xFFF59E0B),
-      ),
+        color: Color(0xFFF59E0B),      ),
     );
   }
 }

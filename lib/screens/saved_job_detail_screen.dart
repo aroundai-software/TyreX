@@ -5,6 +5,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_constants.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:http/http.dart' as http;
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 
 class SavedJobDetailScreen extends StatefulWidget {
   final int reportId;
@@ -750,6 +754,99 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
           ),
 
         const SizedBox(height: 24),
+        _buildScannedQRsSection(),
+      ],
+    );
+  }
+
+  Widget _buildScannedQRsSection() {
+    final photoUrlsDynamic = _report?['photo_urls'];
+    if (photoUrlsDynamic == null) return const SizedBox.shrink();
+    
+    List<String> photoUrls = [];
+    if (photoUrlsDynamic is List) {
+      photoUrls = photoUrlsDynamic.map((e) => e.toString()).toList();
+    } else if (photoUrlsDynamic is String && photoUrlsDynamic.startsWith('[')) {
+      try {
+        final decoded = jsonDecode(photoUrlsDynamic) as List;
+        photoUrls = decoded.map((e) => e.toString()).toList();
+      } catch (_) {}
+    }
+    
+    final qrUrls = photoUrls.where((url) => url.contains('_tyreqr_')).toList();
+    if (qrUrls.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Scanned Tyre QRs',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 160,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: qrUrls.length,
+            itemBuilder: (context, index) {
+              final url = qrUrls[index];
+              return Container(
+                width: 140,
+                margin: const EdgeInsets.only(right: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                        child: Image.network(url, fit: BoxFit.cover, width: double.infinity),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () async {
+                        try {
+                          final response = await http.get(Uri.parse(url));
+                          final dir = await getTemporaryDirectory();
+                          final file = File('${dir.path}/tyre_qr_$index.jpg');
+                          await file.writeAsBytes(response.bodyBytes);
+                          await Share.shareXFiles([XFile(file.path)], text: 'Tyre QR photo');
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to share: $e')));
+                          }
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        width: double.infinity,
+                        decoration: const BoxDecoration(
+                          color: AppTheme.primaryColor,
+                          borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.share, size: 16, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('Share', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
       ],
     );
   }

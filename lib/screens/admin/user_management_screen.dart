@@ -11,6 +11,7 @@ import '../../widgets/modern_card.dart';
 import '../../widgets/modern_input.dart';
 import '../../widgets/modern_button.dart';
 import '../../widgets/modern_loading.dart';
+import '../../services/company_service.dart';
 
 class UserManagementScreen extends StatefulWidget {
   const UserManagementScreen({super.key});
@@ -67,10 +68,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
-      final response = await supabase
+      var query = supabase
           .from('users')
           .select('id, username, team')
           .eq('role', _selectedRole);
+
+      final companyName = CompanyService().companyName;
+      if (companyName != null && companyName.isNotEmpty) {
+        query = query.eq('company_name', companyName);
+      }
+
+      final response = await query;
 
       if (mounted) {
         setState(() {
@@ -111,6 +119,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
       if (_selectedRole == AppConstants.roleExecutive) {
         userData['team'] = _selectedTeam!;
+      }
+
+      final companyName = CompanyService().companyName;
+      if (companyName != null && companyName.isNotEmpty) {
+        userData['company_name'] = companyName;
       }
 
       await supabase.from('users').insert(userData);

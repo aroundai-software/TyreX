@@ -445,6 +445,85 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
       );
     }
     
+    if (setting.inputType == 'duration_minutes') {
+      final int totalMinutes = setting.value is int ? setting.value as int : int.tryParse(setting.value?.toString() ?? '0') ?? 0;
+      final int initialHours = totalMinutes ~/ 60;
+      final int initialMinutes = totalMinutes % 60;
+      
+      final TextEditingController hoursController = TextEditingController(text: initialHours.toString());
+      final TextEditingController minutesController = TextEditingController(text: initialMinutes.toString());
+      
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              setting.label,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+            ),
+            if (setting.description.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                setting.description,
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: hoursController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Hours',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: minutesController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Minutes',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton(
+                  onPressed: () {
+                    HapticUtils.light();
+                    final int hrs = int.tryParse(hoursController.text) ?? 0;
+                    final int mins = int.tryParse(minutesController.text) ?? 0;
+                    final int parsedValue = (hrs * 60) + mins;
+                    
+                    provider.updateSetting(setting.key, parsedValue);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Saved: $hrs hours and $mins minutes')),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     return const SizedBox.shrink();
   }
   

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/app_constants.dart';
 import '../../providers/user_provider.dart';
+import '../../services/company_service.dart';
 import '../login_screen.dart';
 import 'invoice_detail_screen.dart';
 
@@ -221,6 +222,23 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
+        leadingWidth: 150,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 16.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              CompanyService().companyName ?? '',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
         title: const Text('Accountant Dashboard'),
         centerTitle: true,
         backgroundColor: Colors.white,

@@ -116,7 +116,7 @@ Deno.serve(async (_req) => {
     const { data: settingRow } = await supabase
       .from('app_settings')
       .select('setting_value')
-      .eq('setting_key', 'overdue_reminder_interval_minutes')
+      .eq('setting_key', 'overdue_minutes_threshold')
       .single()
 
     const intervalMin = parseInt(String(settingRow?.setting_value ?? 60))

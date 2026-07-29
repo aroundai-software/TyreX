@@ -22,6 +22,7 @@ import '../../widgets/modern_input.dart';
 import '../../widgets/modern_loading.dart';
 import 'package:printing/printing.dart';
 import '../../widgets/printable_job_card.dart';
+import '../../services/company_service.dart';
 
 class ReportsAnalyticsScreen extends StatefulWidget {
   const ReportsAnalyticsScreen({super.key});
@@ -194,7 +195,8 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final response = await supabase.from('reports').select('''
+      final String? companyName = CompanyService().companyName;
+      var query = supabase.from('reports').select('''
             id, job_card_id, started_at, completed_at, created_at, status, complaint, suggested, approved,
             "Owner name", client_phone, odometer_reading,
             customer_feedback_text, customer_feedback_audio,
@@ -204,7 +206,13 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
               vehicle_models!inner(brand, "Model name")
             ),
             executive:executive_id(username)
-          ''').order('created_at', ascending: false);
+          ''');
+          
+      if (companyName != null && companyName.isNotEmpty) {
+        query = query.eq('company_name', companyName);
+      }
+      
+      final response = await query.order('created_at', ascending: false);
 
       setState(() {
         _allReports = List<Map<String, dynamic>>.from(response);

@@ -21,6 +21,8 @@ import 'package:provider/provider.dart';
 import '../../providers/user_provider.dart';
 import 'dart:convert';
 import '../profile_screen.dart';
+import '../../services/company_service.dart';
+import '../update_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -47,11 +49,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   Future<void> _loadMetrics() async {
     try {
+      final String? companyName = CompanyService().companyName;
+      
+      // Build queries with company isolation
+      var usersQuery = supabase.from('users').select('id');
+      var activeReportsQuery = supabase.from('reports').select('id').neq('status', 'Completed');
+      var pendingQuery = supabase.from('reports').select('id').eq('status', 'Pending Approval');
+      var bookingsQuery = supabase.from('bookings').select('id').gte('created_at', DateTime.now().toIso8601String().split('T')[0]);
+      
+      // Apply company filter if available
+      if (companyName != null && companyName.isNotEmpty) {
+        usersQuery = usersQuery.eq('company_name', companyName);
+        activeReportsQuery = activeReportsQuery.eq('company_name', companyName);
+        pendingQuery = pendingQuery.eq('company_name', companyName);
+        bookingsQuery = bookingsQuery.eq('company_name', companyName);
+      }
+      
       final results = await Future.wait([
-        supabase.from('users').select('id').count(),
-        supabase.from('reports').select('id').neq('status', 'Completed').count(),
-        supabase.from('reports').select('id').eq('status', 'Pending Approval').count(),
-        supabase.from('bookings').select('id').gte('created_at', DateTime.now().toIso8601String().split('T')[0]).count(),
+        usersQuery.count(),
+        activeReportsQuery.count(),
+        pendingQuery.count(),
+        bookingsQuery.count(),
       ]);
 
       if (mounted) {
@@ -133,6 +151,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Scaffold(
       backgroundColor:Colors.white,
       appBar: AppBar(
+        leadingWidth: 150,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 16.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              CompanyService().companyName ?? '',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
         title: const Text('Admin Dashboard'),
         centerTitle: true,
         actions: [
@@ -243,8 +278,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     children: [
                       _buildDashboardCard(
                         context,
+                        title: 'Live Job Board',
+                        icon: Icons.dashboard_customize,
+                        color: Colors.orange,
+                        onTap: () {
+                          HapticUtils.light();
+                          Navigator.push(
+                            context,
+                            ModernPageRoute(page: const UpdateScreen(isAdminMode: true)),
+                          );
+                        },
+                      ),
+                      _buildDashboardCard(
+                        context,
                         title: 'Reports & Service History',
-                    
                         icon: Icons.assessment,
                         color: Colors.blue,
                         onTap: () {

@@ -101,9 +101,10 @@ class CompanyService {
 
     final result = Map<String, dynamic>.from(data);
     
-    // Tables that have company_name and Guid columns
+    // Tables that have company_name columns
     final tablesWithCompanyFields = {
-      'vehicles', 'reports', 'owner_master', 'vehicle_models', 'materials'
+      'vehicles', 'reports', 'owner_master', 'vehicle_models', 'materials', 
+      'bookings', 'service_reminders', 'service_catalog', 'users'
     };
     
     // Only add company fields for tables that support them

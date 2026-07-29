@@ -292,6 +292,47 @@ class SupabaseService {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getAllCompanyReports({String? companyName}) async {
+    debugPrint('🔵 Supabase: Fetching all reports for company: $companyName');
+    try {
+      var query = _client
+          .from('reports')
+          .select('''
+            id, job_card_id, created_at, started_at, completed_at, status, complaint, suggested, approved,
+            client_phone, odometer_reading, "Owner name",
+            customer_feedback_text, customer_feedback_audio,
+            marks, gdrive_folder_url, booking_id, created_by_pudo_id,
+            inspection_remarks,
+            vehicles!reports_vehicle_fk(
+              "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
+              vehicle_models!inner(brand, "Model name")
+            ),
+            executive:executive_id(username)
+          ''');
+      
+      if (companyName != null && companyName.isNotEmpty) {
+        query = query.eq('company_name', companyName);
+      }
+      
+      final response = await query.order('created_at', ascending: false);
+
+      debugPrint('✅ Supabase returned ${response.length} company reports');
+      return List<Map<String, dynamic>>.from(response);
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Supabase error: $e');
+      if (kDebugMode) {
+        print('Supabase error fetching company reports: ${e.message}');
+      }
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ Supabase exception: $e');
+      if (kDebugMode) {
+        print('Error fetching company reports: $e');
+      }
+      throw ExceptionHandler.handleError(e);
+    }
+  }
+
   /// Fetches all reports that have not been assigned to an executive yet.
   Future<List<Map<String, dynamic>>> getUnassignedReports() async {
     try {
@@ -390,11 +431,12 @@ class SupabaseService {
   /// Fetches all bookings that are not yet completed.
   Future<List<Map<String, dynamic>>> getOpenBookings() async {
     try {
-      final response = await _client
-          .from('bookings')
-          .select('*, assigned_pudo:assigned_pudo_id(username)')
-          .neq('status', AppConstants.statusCompleted)
-          .order('created_at', ascending: false);
+      var query = _client.from('bookings').select('*, assigned_pudo:assigned_pudo_id(username)').neq('status', AppConstants.statusCompleted);
+      final companyName = CompanyService().companyName;
+      if (companyName != null && companyName.isNotEmpty) {
+        query = query.eq('company_name', companyName);
+      }
+      final response = await query.order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } on PostgrestException catch (e) {
@@ -1408,25 +1450,29 @@ class SupabaseService {
 
   Future<List<Map<String, dynamic>>> getServiceCatalog() async {
     try {
-      final response = await _client
-          .from('service_catalog')
-          .select()
-          .order('name');
+      final companyName = CompanyService().companyName;
+      List<dynamic> response;
+      if (companyName != null && companyName.isNotEmpty) {
+        response = await _client.from('service_catalog').select().eq('company_name', companyName).order('name');
+      } else {
+        response = await _client.from('service_catalog').select().order('name');
+      }
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       if (kDebugMode) {
         print('Error fetching service catalog: $e');
       }
-      return [];
+      rethrow;
     }
   }
 
   Future<void> addServiceCatalogItem(String name, double? defaultPrice) async {
     try {
-      await _client.from('service_catalog').insert({
+      final payload = CompanyService().addCompanyFields({
         'name': name,
         'default_price': defaultPrice,
-      });
+      }, tableName: 'service_catalog');
+      await _client.from('service_catalog').insert(payload);
     } catch (e) {
       if (kDebugMode) {
         print('Error adding service catalog item: $e');

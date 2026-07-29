@@ -37,7 +37,7 @@ class AdminSettingsProvider with ChangeNotifier {
   }
 
   // SLA / Overdue settings
-  int get overdueHoursThreshold => _getIntValue('overdue_hours_threshold', defaultValue: 1);
+  int get overdueMinutesThreshold => _getIntValue('overdue_minutes_threshold', defaultValue: 60);
 
   bool _hasMetadataInSettings() {
     if (_settings.isEmpty) return false;

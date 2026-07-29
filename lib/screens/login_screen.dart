@@ -42,7 +42,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final supabase = Supabase.instance.client;
   
   List<Map<String, dynamic>> _companies = [];
-  Map<String, dynamic>? _selectedCompany;
   bool _loadingCompanies = true;
   
 
@@ -66,9 +65,6 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() {
           _companies = companies;
           _loadingCompanies = false;
-          if (_companies.isNotEmpty) {
-            _selectedCompany = _companies[0];
-          }
         });
       }
     } catch (e) {
@@ -115,11 +111,25 @@ class _LoginScreenState extends State<LoginScreen> {
         reportProvider.clearCache();
         debugPrint('🗑️ LoginScreen: Cleared report cache before login');
 
-        // Set the selected company
-        if (_selectedCompany != null) {
-          CompanyService().setActiveCompany(_selectedCompany!);
-          debugPrint('✅ LoginScreen: Company set to ${_selectedCompany!['company_name']}');
+        // Auto-assign company from user's profile
+        final userCompany = response['company_name'];
+        if (userCompany == null || userCompany.toString().trim().isEmpty) {
+          throw AuthenticationException('Your account is not assigned to any company. Please contact the administrator.');
         }
+
+        final normalizedUserCompany = userCompany.toString().trim().toLowerCase();
+        var companyData = _companies.firstWhere(
+          (c) => (c['company_name']?.toString().trim().toLowerCase() ?? '') == normalizedUserCompany,
+          orElse: () => <String, dynamic>{},
+        );
+
+        if (companyData.isEmpty) {
+          debugPrint('⚠️ Warning: Company "$userCompany" not found in tally_companies. Using fallback.');
+          companyData = {'company_name': userCompany};
+        }
+
+        CompanyService().setActiveCompany(companyData);
+        debugPrint('✅ LoginScreen: Automatically assigned company to $userCompany');
 
         // Set the user FIRST
         userProvider.setUser(response);
@@ -223,10 +233,22 @@ class _LoginScreenState extends State<LoginScreen> {
           reportProvider.clearCache();
           debugPrint('🗑️ BiometricLogin: Cleared report cache before login');
 
-          // Set the selected company
-          if (_selectedCompany != null) {
-            CompanyService().setActiveCompany(_selectedCompany!);
-            debugPrint('✅ BiometricLogin: Company set to ${_selectedCompany!['company_name']}');
+          // Auto-assign company from user's profile for biometric login
+          final userCompany = cachedUser['company_name'];
+          if (userCompany != null && userCompany.toString().trim().isNotEmpty) {
+            final normalizedUserCompany = userCompany.toString().trim().toLowerCase();
+            var companyData = _companies.firstWhere(
+              (c) => (c['company_name']?.toString().trim().toLowerCase() ?? '') == normalizedUserCompany,
+              orElse: () => <String, dynamic>{},
+            );
+            
+            if (companyData.isEmpty) {
+              debugPrint('⚠️ Warning: Company "$userCompany" not found in tally_companies for BiometricLogin. Using fallback.');
+              companyData = {'company_name': userCompany};
+            }
+            
+            CompanyService().setActiveCompany(companyData);
+            debugPrint('✅ BiometricLogin: Automatically assigned company to $userCompany');
           }
 
           // Set the user
@@ -395,47 +417,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ).animate().fadeIn(duration: 500.ms, delay: 400.ms).slideX(begin: 0.2, end: 0),
                       const SizedBox(height: 16),
 
-                      // Company Dropdown
-                      _loadingCompanies
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 12),
-                              child: SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : Container(
-                              decoration: BoxDecoration(
-                                border: Border.all(color: const Color(0xFFE0E6ED)),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: DropdownButton<Map<String, dynamic>>(
-                                value: _selectedCompany,
-                                isExpanded: true,
-                                underline: const SizedBox(),
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                                items: _companies.map((company) {
-                                  return DropdownMenuItem(
-                                    value: company,
-                                    child: Text(
-                                      company['company_name'] ?? 'Unknown',
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        color: AppTheme.textPrimary,
-                                      ),
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (company) {
-                                  if (company != null) {
-                                    setState(() {
-                                      _selectedCompany = company;
-                                    });
-                                  }
-                                },
-                              ),
-                            ).animate().fadeIn(duration: 500.ms, delay: 450.ms).slideX(begin: -0.2, end: 0),
+                      // Company selection has been removed. It is automatically assigned based on user.
                       
                       const SizedBox(height: 28),
 

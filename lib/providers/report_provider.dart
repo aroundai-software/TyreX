@@ -2,6 +2,7 @@
 import 'package:flutter/foundation.dart';
 import '../services/supabase_service.dart';
 import '../services/cache_service.dart';
+import '../services/company_service.dart';
 
 class ReportProvider extends ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
@@ -22,11 +23,11 @@ class ReportProvider extends ChangeNotifier {
   String? get error => _error;
 
   // Core fetching logic. Assumes the caller manages _isLoading state.
-  Future<void> _performFetch(int userId, {bool forceRefresh = false}) async {
+  Future<void> _performFetch(int userId, {bool forceRefresh = false, bool isAdminMode = false}) async {
     try {
       // Check cache first (only if not forcing refresh)
       if (!forceRefresh) {
-        final cacheKey = 'reports_$userId';
+        final cacheKey = isAdminMode ? 'reports_admin' : 'reports_$userId';
         final cached = _cacheService.get<List<Map<String, dynamic>>>(cacheKey);
         
         if (cached != null && !_isLoading) {
@@ -35,16 +36,26 @@ class ReportProvider extends ChangeNotifier {
         }
       }
 
-      final results = await Future.wait([
-        _supabaseService.getAllReportsForUser(userId),
-        _supabaseService.getUnassignedReports(),
-      ]);
-      _reports = results[0];
-      _unassignedReports = results[1];
+      if (isAdminMode) {
+        final companyName = CompanyService().companyName;
+        final results = await Future.wait([
+          _supabaseService.getAllCompanyReports(companyName: companyName),
+          _supabaseService.getUnassignedReports(),
+        ]);
+        _reports = results[0];
+        _unassignedReports = results[1];
+      } else {
+        final results = await Future.wait([
+          _supabaseService.getAllReportsForUser(userId),
+          _supabaseService.getUnassignedReports(),
+        ]);
+        _reports = results[0];
+        _unassignedReports = results[1];
+      }
       
       // Cache the results (only if not forcing refresh)
       if (!forceRefresh) {
-        final cacheKey = 'reports_$userId';
+        final cacheKey = isAdminMode ? 'reports_admin' : 'reports_$userId';
         _cacheService.set(cacheKey, _reports, ttl: const Duration(minutes: 5));
       }
       
@@ -107,8 +118,8 @@ class ReportProvider extends ChangeNotifier {
   }
 
   // Method for initial load.
-  Future<void> fetchReports(int userId) async {
-    debugPrint('🔵 fetchReports called with userId: $userId');
+  Future<void> fetchReports(int userId, {bool isAdminMode = false}) async {
+    debugPrint('🔵 fetchReports called with userId: $userId, isAdminMode: $isAdminMode');
     // Prevent concurrent fetches
     if (_isLoading) return;
 
@@ -116,7 +127,7 @@ class ReportProvider extends ChangeNotifier {
     _error = null;
 
     try {
-      await _performFetch(userId, forceRefresh: false);
+      await _performFetch(userId, forceRefresh: false, isAdminMode: isAdminMode);
     } finally {
       _isLoading = false;
       notifyListeners(); // Notify UI that loading is finished
@@ -124,8 +135,8 @@ class ReportProvider extends ChangeNotifier {
   }
 
   // Method for explicit refresh (e.g., pull-to-refresh). Resolves the deadlock.
-  Future<void> refresh(int userId) async {
-    debugPrint('🔵 refresh called with userId: $userId');
+  Future<void> refresh(int userId, {bool isAdminMode = false}) async {
+    debugPrint('🔵 refresh called with userId: $userId, isAdminMode: $isAdminMode');
 
     // Prevent concurrent fetches entirely.
     if (_isLoading) {
@@ -139,7 +150,7 @@ class ReportProvider extends ChangeNotifier {
 
     try {
       // ✅ Force refresh to bypass cache
-      await _performFetch(userId, forceRefresh: true);
+      await _performFetch(userId, forceRefresh: true, isAdminMode: isAdminMode);
     } finally {
       // Ensure loading state is cleared and listeners notified at the end
       _isLoading = false;

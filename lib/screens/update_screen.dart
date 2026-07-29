@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import '../providers/report_provider.dart';
 import '../services/supabase_service.dart';
 import '../services/local_media_service.dart';
+import '../services/company_service.dart';
 import '../screens/job_card_screen.dart';
 import '../screens/custom_scanner_screen.dart';
 import '../screens/continuous_camera_screen.dart';
@@ -31,7 +32,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 
 class UpdateScreen extends StatefulWidget {
-  const UpdateScreen({super.key});
+  final bool isAdminMode;
+  const UpdateScreen({super.key, this.isAdminMode = false});
 
   @override
   State<UpdateScreen> createState() => _UpdateScreenState();
@@ -229,7 +231,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     if (user != null) {
       final userId = user['id'] as int;
       // Use the ReportProvider to fetch the latest data
-      await Provider.of<ReportProvider>(context, listen: false).refresh(userId);
+      await Provider.of<ReportProvider>(context, listen: false).refresh(userId, isAdminMode: widget.isAdminMode);
       // Also fetch direct bookings
       await _fetchDirectBookings(userId);
       
@@ -752,7 +754,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final user = Provider.of<UserProvider>(context, listen: false).user;
       if (user != null && mounted) {
         final userId = user['id'] as int;
-        await Provider.of<ReportProvider>(context, listen: false).refresh(userId);
+        await Provider.of<ReportProvider>(context, listen: false).refresh(userId, isAdminMode: widget.isAdminMode);
       }
 
       if (!mounted) return;
@@ -867,7 +869,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         final user = Provider.of<UserProvider>(context, listen: false).user;
         if (user != null && mounted) {
           final userId = user['id'] as int;
-          await Provider.of<ReportProvider>(context, listen: false).refresh(userId);
+          await Provider.of<ReportProvider>(context, listen: false).refresh(userId, isAdminMode: widget.isAdminMode);
         }
 
         if (!mounted) return;
@@ -960,7 +962,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final user = Provider.of<UserProvider>(context, listen: false).user;
       if (user != null && mounted) {
         final userId = user['id'] as int;
-        await Provider.of<ReportProvider>(context, listen: false).refresh(userId);
+        await Provider.of<ReportProvider>(context, listen: false).refresh(userId, isAdminMode: widget.isAdminMode);
       }
 
       if (!mounted) return;
@@ -1238,7 +1240,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final user = Provider.of<UserProvider>(context, listen: false).user;
       if (user != null && mounted) {
         final userId = user['id'] as int; // ✅ Extract as int
-        await Provider.of<ReportProvider>(context, listen: false).refresh(userId);
+        await Provider.of<ReportProvider>(context, listen: false).refresh(userId, isAdminMode: widget.isAdminMode);
       }
     } catch (e) {
       _showError('Failed to cancel job: ${e.toString()}');
@@ -1405,6 +1407,31 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         return Scaffold(
           backgroundColor: const Color(0xFFF5F7FA),
           appBar: AppBar(
+            leadingWidth: 200,
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 8.0),
+              child: Row(
+                children: [
+                  if (widget.isAdminMode)
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: AppTheme.primaryColor),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  Expanded(
+                    child: Text(
+                      CompanyService().companyName ?? '',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             title: const Text(
               'Job Cards',
               style: TextStyle(
@@ -1571,12 +1598,12 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             final startTime = DateTime.tryParse(job['started_at']);
             if (startTime != null) {
               final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-              final int threshold = adminSettings.overdueHoursThreshold;
-              final hoursRunning = DateTime.now().difference(startTime).inHours;
+              final int threshold = adminSettings.overdueMinutesThreshold;
+              final minutesRunning = DateTime.now().difference(startTime).inMinutes;
               
-              if (hoursRunning >= threshold) {
+              if (minutesRunning >= threshold) {
                 isOverdue = true;
-                overdueBy = hoursRunning;
+                overdueBy = minutesRunning;
                 final int jobId = job['id'];
                 
                 // Trigger notification if not already notified
@@ -1585,7 +1612,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     NotificationService().showLocalNotification(
                       title: 'Job Overdue Alert',
-                      body: 'Job #${job['job_card_id'] ?? jobId} for $vehicleNo has been in progress for $hoursRunning hours.',
+                      body: 'Job #${job['job_card_id'] ?? jobId} for $vehicleNo has been in progress for $minutesRunning minutes.',
                     );
                   });
                 }

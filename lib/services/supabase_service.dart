@@ -1449,11 +1449,7 @@ class SupabaseService {
 
   Future<List<Map<String, dynamic>>> getTyreCatalog({String? companyName}) async {
     try {
-      var query = _client.from('tyre_catalog').select();
-      if (companyName != null && companyName.isNotEmpty) {
-        query = query.eq('company_name', companyName);
-      }
-      final response = await query.order('brand').order('model').order('size');
+      final response = await _client.from('tyre_catalog').select().order('brand').order('model').order('size');
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       if (kDebugMode) {
@@ -1511,13 +1507,7 @@ class SupabaseService {
 
   Future<List<Map<String, dynamic>>> getServiceCatalog() async {
     try {
-      final companyName = CompanyService().companyName;
-      List<dynamic> response;
-      if (companyName != null && companyName.isNotEmpty) {
-        response = await _client.from('service_catalog').select().eq('company_name', companyName).order('name');
-      } else {
-        response = await _client.from('service_catalog').select().order('name');
-      }
+      final response = await _client.from('service_catalog').select().order('name');
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       if (kDebugMode) {

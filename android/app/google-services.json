@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "475147548389",
+    "project_id": "tyrex-edd92",
+    "storage_bucket": "tyrex-edd92.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475147548389:android:46971c1334afe065c4860c",
+        "android_client_info": {
+          "package_name": "com.company.tyrex"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD3J5bFpaHG9c0Q8I28fhbd4uRZ0-0NGXo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

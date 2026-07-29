@@ -1,0 +1,86 @@
+# ─── Miscellaneous ────────────────────────────────────────────────────────────
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+Thumbs.db
+
+# ─── IDE / Editor ─────────────────────────────────────────────────────────────
+*.iml
+*.ipr
+*.iws
+.idea/
+# Uncomment if you don't want to share VS Code settings:
+# .vscode/
+
+# ─── Flutter / Dart / Pub ─────────────────────────────────────────────────────
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# ─── Symbolication / Obfuscation ──────────────────────────────────────────────
+app.*.symbols
+app.*.map.json
+
+# ─── Android Build Artifacts ──────────────────────────────────────────────────
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/captures/
+
+# ─── iOS Build Artifacts ──────────────────────────────────────────────────────
+/ios/Pods/
+/ios/.symlinks/
+/ios/Flutter/Flutter.framework
+/ios/Flutter/Flutter.podspec
+/ios/Runner/GeneratedPluginRegistrant.*
+
+# ─── Sensitive / Secret Files ─────────────────────────────────────────────────
+# Firebase service account key (NEVER commit this!)
+*service-account*.json
+*serviceAccount*.json
+firebase-adminsdk*.json
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Supabase local config secrets
+supabase/.temp/
+supabase/config.toml
+
+# ─── Firebase (keep google-services.json for Android build) ───────────────────
+# google-services.json is safe to commit — it contains only public identifiers.
+# Firebase security is enforced via Firebase Security Rules, not the config file.
+# If you still prefer to exclude it, uncomment the line below:
+# android/app/google-services.json
+
+# ─── Generated files ──────────────────────────────────────────────────────────
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk

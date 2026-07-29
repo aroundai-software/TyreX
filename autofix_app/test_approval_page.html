@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Approval Data</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        h2 { color: #333; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>Test Approval Page Data</h1>
+    
+    <div class="section">
+        <h2>Instructions:</h2>
+        <ol>
+            <li>Get a report ID from your Flutter app (the number in the approval link)</li>
+            <li>Enter it below and click "Test"</li>
+            <li>Check if labour_cost and materials are present in the data</li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <label for="reportId">Report ID:</label>
+        <input type="number" id="reportId" placeholder="Enter report ID" style="padding: 5px; margin: 0 10px;">
+        <button onclick="testFetch()" style="padding: 5px 15px;">Test Fetch</button>
+    </div>
+
+    <div id="result" class="section" style="display: none;">
+        <h2>Results:</h2>
+        <div id="output"></div>
+    </div>
+
+    <script>
+        // Initialize Supabase with correct credentials
+        const SUPABASE_URL = 'https://gfylsjfljnwyomfouwvs.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmeWxzamZsam53eW9tZm91d3ZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MDc5MTYsImV4cCI6MjA3Mjk4MzkxNn0.hMvLvCDVaFtq0rXToHGOJPSFe-QnJ6_S-MYsI0d5zOs';
+        
+        const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        async function testFetch() {
+            const reportId = document.getElementById('reportId').value;
+            const output = document.getElementById('output');
+            const result = document.getElementById('result');
+            
+            if (!reportId) {
+                alert('Please enter a report ID');
+                return;
+            }
+
+            output.innerHTML = '<p>Loading...</p>';
+            result.style.display = 'block';
+
+            try {
+                const { data: report, error } = await sb
+                    .from('reports')
+                    .select('id, suggested, approved, labour_cost, vehicles!inner(vehicle_no)')
+                    .eq('id', reportId)
+                    .single();
+
+                if (error) {
+                    output.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                    return;
+                }
+
+                if (!report) {
+                    output.innerHTML = '<p class="error">Report not found</p>';
+                    return;
+                }
+
+                // Parse suggested items
+                let suggestedItems = [];
+                try {
+                    suggestedItems = JSON.parse(report.suggested || '[]');
+                } catch (e) {
+                    suggestedItems = [];
+                }
+
+                // Build output
+                let html = '<h3 class="success">✅ Data fetched successfully!</h3>';
+                
+                html += '<h4>Labour Cost:</h4>';
+                html += `<p><strong>${report.labour_cost !== null && report.labour_cost !== undefined ? '₹' + report.labour_cost : 'NOT SET (null/undefined)'}</strong></p>`;
+                
+                html += '<h4>Suggested Items:</h4>';
+                if (suggestedItems.length > 0) {
+                    html += '<ul>';
+                    suggestedItems.forEach((item, index) => {
+                        html += `<li>
+                            <strong>${item.text}</strong> - ₹${item.amount || 0}
+                            <br><small>Type: ${item.type}</small>
+                        `;
+                        
+                        if (item.materials && Array.isArray(item.materials) && item.materials.length > 0) {
+                            html += '<br><small>Materials: ' + item.materials.join(', ') + '</small>';
+                        } else {
+                            html += '<br><small class="error">No materials</small>';
+                        }
+                        html += '</li>';
+                    });
+                    html += '</ul>';
+                } else {
+                    html += '<p class="error">No suggested items found</p>';
+                }
+
+                html += '<h4>Raw Data:</h4>';
+                html += '<pre>' + JSON.stringify(report, null, 2) + '</pre>';
+
+                output.innerHTML = html;
+
+            } catch (error) {
+                output.innerHTML = `<p class="error">Unexpected error: ${error.message}</p>`;
+                console.error('Error:', error);
+            }
+        }
+    </script>
+</body>
+</html>

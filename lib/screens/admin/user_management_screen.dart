@@ -30,11 +30,8 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   final List<String> _manageableRoles = [
     AppConstants.roleAdmin,
     AppConstants.roleExecutive,
-    AppConstants.roleTeleCaller,
-    AppConstants.rolePickupDropoff,
     AppConstants.roleAccountant,
-    AppConstants.roleAlignmentTech,
-    AppConstants.roleInstallationTech,
+    ...AppConstants.techRoles,
   ];
 
   String? _selectedTeam;
@@ -237,27 +234,24 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           padding: EdgeInsets.all(AppTheme.spacingMd),
           child: Column(
           children: [
-            // Role Selector Card
-            ModernCard(
-              padding: const EdgeInsets.all(20),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 24.0),
               child: DropdownButtonFormField<String>(
-                initialValue: _selectedRole,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Select Role to Manage',
-                  prefixIcon: Icon(Icons.manage_accounts),
-                  border: InputBorder.none,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.borderRadiusMd),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
                 ),
-                style: const TextStyle(fontSize: 16, color: Colors.black),
-                dropdownColor: Colors.white,
+                value: _selectedRole,
                 items: _manageableRoles.map((role) {
                   String displayRole = role.replaceAll('_', ' ');
                   displayRole = displayRole[0].toUpperCase() + displayRole.substring(1);
-                  return DropdownMenuItem(
-                    value: role, 
-                    child: Text(
-                      displayRole,
-                      style: const TextStyle(color: Colors.black, fontSize: 16),
-                    ),
+                  return DropdownMenuItem<String>(
+                    value: role,
+                    child: Text(displayRole),
                   );
                 }).toList(),
                 onChanged: (value) {
@@ -271,7 +265,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   }
                 },
               ),
-            ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.2, end: 0),
+            ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.1, end: 0),
 
             // Add Form Card
             ModernCard(
@@ -306,24 +300,63 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    ModernTextField(
-                      controller: _usernameController,
-                      label: 'Username',
-                      hint: 'Enter username',
-                      prefixIcon: const Icon(Icons.person_outline),
-                      validator: Validators.validateUsername,
-                    ).animate().fadeIn(delay: 100.ms),
-                    if (!_isTechnicianRole) ...[
-                      const SizedBox(height: 16),
-                      ModernTextField(
-                        controller: _passwordController,
-                        label: 'Password',
-                        hint: 'Enter password',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        obscureText: true,
-                        validator: Validators.validatePassword,
-                      ).animate().fadeIn(delay: 200.ms),
-                    ],
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (constraints.maxWidth > 500) {
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: ModernTextField(
+                                  controller: _usernameController,
+                                  label: 'Username',
+                                  hint: 'Enter username',
+                                  prefixIcon: const Icon(Icons.person_outline),
+                                  validator: Validators.validateUsername,
+                                ).animate().fadeIn(delay: 100.ms),
+                              ),
+                              if (!_isTechnicianRole) ...[
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: ModernTextField(
+                                    controller: _passwordController,
+                                    label: 'Password',
+                                    hint: 'Enter password',
+                                    prefixIcon: const Icon(Icons.lock_outline),
+                                    obscureText: true,
+                                    validator: Validators.validatePassword,
+                                  ).animate().fadeIn(delay: 200.ms),
+                                ),
+                              ],
+                            ],
+                          );
+                        } else {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ModernTextField(
+                                controller: _usernameController,
+                                label: 'Username',
+                                hint: 'Enter username',
+                                prefixIcon: const Icon(Icons.person_outline),
+                                validator: Validators.validateUsername,
+                              ).animate().fadeIn(delay: 100.ms),
+                              if (!_isTechnicianRole) ...[
+                                const SizedBox(height: 16),
+                                ModernTextField(
+                                  controller: _passwordController,
+                                  label: 'Password',
+                                  hint: 'Enter password',
+                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  obscureText: true,
+                                  validator: Validators.validatePassword,
+                                ).animate().fadeIn(delay: 200.ms),
+                              ],
+                            ],
+                          );
+                        }
+                      },
+                    ),
                     if (_selectedRole == AppConstants.roleExecutive) ...[
                       const SizedBox(height: 16),
                       Container(
@@ -424,16 +457,22 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       final user = _users[index];
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: ModernCard(
-                          padding: const EdgeInsets.all(12),
-                          child: Row(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey.shade200, width: 1.5),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
                             children: [
                               Container(
-                                width: 40,
-                                height: 40,
+                                width: 44,
+                                height: 44,
                                 decoration: BoxDecoration(
                                   color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
+                                  shape: BoxShape.circle,
                                 ),
                                 child: Center(
                                   child: Text(
@@ -458,45 +497,53 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                         fontSize: 16,
                                       ),
                                     ),
-                                    if (user['team'] != null) ...[
-                                      const SizedBox(height: 4),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: AppTheme.primaryLight,
-                                          borderRadius: BorderRadius.circular(12),
-                                        ),
-                                        child: Text(
-                                          user['team'],
-                                          style: const TextStyle(
-                                            fontSize: 12,
-                                            color: AppTheme.primaryColor,
-                                            fontWeight: FontWeight.w500,
+                                      if (user['team'] != null) ...[
+                                        const SizedBox(height: 4),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: user['team'] == 'Mechanical' ? Colors.orange.withValues(alpha: 0.1) : Colors.purple.withValues(alpha: 0.1),
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          child: Text(
+                                            user['team'],
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: user['team'] == 'Mechanical' ? Colors.orange.shade700 : Colors.purple.shade700,
+                                              fontWeight: FontWeight.bold,
+                                            ),
                                           ),
                                         ),
-                                      ),
+                                      ],
                                     ],
-                                  ],
+                                  ),
                                 ),
+                                TextButton.icon(
+                                  icon: const Icon(
+                                    Icons.delete_outline,
+                                    size: 18,
+                                  ),
+                                  label: const Text('Delete'),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: const Color(0xFFEF4444),
+                                    backgroundColor: const Color(0xFFEF4444).withValues(alpha: 0.1),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  ),
+                                  onPressed: _isLoading
+                                      ? null
+                                      : () => _deleteUser(
+                                    user['id'],
+                                    user['username'],
+                                  ),
+                                ),
+                                ],
                               ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete_outline,
-                                  color: Color(0xFFEF4444),
-                                ),
-                                tooltip: 'Delete ${user['username']}',
-                                onPressed: _isLoading
-                                    ? null
-                                    : () => _deleteUser(
-                                  user['id'],
-                                  user['username'],
-                                ),
-                                splashRadius: 20,
-                              ),
-                            ],
+                            ),
                           ),
-                        ).animate().fadeIn(delay: Duration(milliseconds: index * 100)).slideY(begin: 0.1, end: 0),
-                      );
+                        ).animate().fadeIn(delay: Duration(milliseconds: index * 100)).slideY(begin: 0.1, end: 0);
                     },
                   ),
                 ],

@@ -191,7 +191,7 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
         title: const Text('Vehicle Management'),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -200,28 +200,74 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Create New Vehicle Brand & Model',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.directions_car, color: Colors.blue, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Create New Vehicle',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _brandController,
-                    decoration: const InputDecoration(
-                      labelText: 'Brand *',
-                      hintText: 'e.g., Maruti Suzuki',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _modelController,
-                    decoration: const InputDecoration(
-                      labelText: 'Model *',
-                      hintText: 'e.g., Swift',
-                    ),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 600) {
+                        return Column(
+                          children: [
+                            TextField(
+                              controller: _brandController,
+                              decoration: const InputDecoration(
+                                labelText: 'Brand *',
+                                hintText: 'e.g., Maruti Suzuki',
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _modelController,
+                              decoration: const InputDecoration(
+                                labelText: 'Model *',
+                                hintText: 'e.g., Swift',
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _brandController,
+                              decoration: const InputDecoration(
+                                labelText: 'Brand *',
+                                hintText: 'e.g., Maruti Suzuki',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextField(
+                              controller: _modelController,
+                              decoration: const InputDecoration(
+                                labelText: 'Model *',
+                                hintText: 'e.g., Swift',
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -238,59 +284,132 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
             ),
             const SizedBox(height: 16),
 
-            // List - Expanded container with fixed height
-            AppCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Existing Brands & Models',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+            // List
+            Expanded(
+              child: AppCard(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Existing Vehicles',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${_vehicleModels.length} total',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    height: 400, // Fixed height for the list container
-                    child: _isLoading
-                        ? const Center(child: CircularProgressIndicator())
-                        : _vehicleModels.isEmpty
-                        ? const Center(
-                      child: Text(
-                        'No vehicle models created yet.',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
+                  const Divider(height: 1),
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.all(32.0),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (_vehicleModels.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(48.0),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.directions_car, size: 48, color: Colors.grey.shade300),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No vehicles yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Add your first vehicle model above.',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     )
-                        : ListView.builder(
-                      itemCount: _vehicleModels.length,
-                      itemBuilder: (context, index) {
+                  else
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: _vehicleModels.length,
+                        separatorBuilder: (context, index) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
                         final item = _vehicleModels[index];
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade200),
-                          ),
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.directions_car, color: Colors.blue, size: 16),
+                              ),
+                              const SizedBox(width: 16),
                               Expanded(
-                                child: Text(
-                                  '${item['brand']} - ${item['Model name']}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                child: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        item['brand'],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 15,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    const Text(
+                                      ' · ',
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Flexible(
+                                      child: Text(
+                                        item['Model name'],
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 15,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               IconButton(
                                 icon: const Icon(
-                                  Icons.delete,
+                                  Icons.delete_outline,
                                   color: Colors.red,
                                 ),
                                 onPressed: () => _deleteVehicleModel(
@@ -298,17 +417,18 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
                                   item['brand'],
                                   item['Model name'],
                                 ),
+                                tooltip: 'Delete',
                               ),
                             ],
                           ),
                         );
                       },
                     ),
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 20), // Extra padding at bottom
           ],
         ),
       ),

@@ -199,7 +199,6 @@ class AppCard extends StatelessWidget {
     return Container(
       margin: margin ?? const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: color ?? AppTheme.cardBackground,
         borderRadius: BorderRadius.circular(AppTheme.borderRadiusLg),
         border: Border.all(color: AppTheme.borderColor, width: 1),
         boxShadow: elevation != null && elevation! > 0
@@ -212,9 +211,14 @@ class AppCard extends StatelessWidget {
               ]
             : null,
       ),
-      child: Padding(
-        padding: padding ?? const EdgeInsets.all(20),
-        child: child,
+      child: Material(
+        color: color ?? AppTheme.cardBackground,
+        borderRadius: BorderRadius.circular(AppTheme.borderRadiusLg),
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: padding ?? const EdgeInsets.all(20),
+          child: child,
+        ),
       ),
     );
   }

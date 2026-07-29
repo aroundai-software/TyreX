@@ -172,7 +172,7 @@ class _ServiceCatalogScreenState extends State<ServiceCatalogScreen> {
         title: const Text('Service Catalog'),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -184,12 +184,25 @@ class _ServiceCatalogScreenState extends State<ServiceCatalogScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _editingId == null ? 'Add New Service' : 'Edit Service',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.build, color: Colors.orange, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _editingId == null ? 'Add New Service' : 'Edit Service',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                       if (_editingId != null)
                         TextButton(
@@ -199,23 +212,61 @@ class _ServiceCatalogScreenState extends State<ServiceCatalogScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Service Name *',
-                      hintText: 'e.g., WHEEL ALIGNMENT',
-                    ),
-                    textCapitalization: TextCapitalization.characters,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _priceController,
-                    decoration: const InputDecoration(
-                      labelText: 'Default Price (Optional)',
-                      hintText: 'e.g., 500',
-                      prefixText: '₹ ',
-                    ),
-                    keyboardType: TextInputType.number,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 600) {
+                        return Column(
+                          children: [
+                            TextField(
+                              controller: _nameController,
+                              decoration: const InputDecoration(
+                                labelText: 'Service Name *',
+                                hintText: 'e.g., WHEEL ALIGNMENT',
+                              ),
+                              textCapitalization: TextCapitalization.characters,
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _priceController,
+                              decoration: const InputDecoration(
+                                labelText: 'Default Price (Optional)',
+                                hintText: 'e.g., 500',
+                                prefixText: '₹ ',
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                            flex: 2,
+                            child: TextField(
+                              controller: _nameController,
+                              decoration: const InputDecoration(
+                                labelText: 'Service Name *',
+                                hintText: 'e.g., WHEEL ALIGNMENT',
+                              ),
+                              textCapitalization: TextCapitalization.characters,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            flex: 1,
+                            child: TextField(
+                              controller: _priceController,
+                              decoration: const InputDecoration(
+                                labelText: 'Default Price (Optional)',
+                                hintText: 'e.g., 500',
+                                prefixText: '₹ ',
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -233,75 +284,148 @@ class _ServiceCatalogScreenState extends State<ServiceCatalogScreen> {
             const SizedBox(height: 16),
 
             // List of Services
-            AppCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Service Catalog',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+            Expanded(
+              child: AppCard(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Service Catalog',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      if (_isLoading)
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (_services.isEmpty && !_isLoading)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32.0),
-                        child: Text(
-                          'No services found.\nAdd one above.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
-                    ),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _services.length,
-                    separatorBuilder: (context, index) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = _services[index];
-                      final price = item['default_price'];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          item['name'],
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(price != null ? '₹ $price' : 'No default price'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
-                              onPressed: () => _editService(item),
-                              tooltip: 'Edit',
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${_services.length} total',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => _deleteService(item['id'], item['name']),
-                              tooltip: 'Delete',
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_isLoading)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  if (_services.isEmpty && !_isLoading)
+                    Padding(
+                      padding: const EdgeInsets.all(48.0),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.build, size: 48, color: Colors.grey.shade300),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No services yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Add your first service above.',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                              ),
                             ),
                           ],
                         ),
-                      );
-                    },
-                  ),
-                ],
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: _services.length,
+                        separatorBuilder: (context, index) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                        final item = _services[index];
+                        final price = item['default_price'];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.build, color: Colors.orange, size: 16),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        item['name'],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 15,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Text(
+                                      price != null ? '₹ $price' : 'No price',
+                                      style: TextStyle(
+                                        color: price != null ? AppTheme.textPrimary : AppTheme.textSecondary,
+                                        fontSize: 14,
+                                        fontWeight: price != null ? FontWeight.w500 : FontWeight.normal,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
+                                    onPressed: () => _editService(item),
+                                    tooltip: 'Edit',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                    onPressed: () => _deleteService(item['id'], item['name']),
+                                    tooltip: 'Delete',
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],

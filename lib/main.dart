@@ -18,8 +18,6 @@ import './providers/user_preferences_provider.dart';
 import './screens/login_screen.dart';
 import './screens/admin/admin_dashboard_screen.dart';
 import './screens/main_dashboard.dart';
-import './screens/pudo_dashboard_screen.dart';
-import './screens/telecaller_dashboard_screen.dart';
 import './screens/accountant/accountant_dashboard_screen.dart';
 
 
@@ -131,10 +129,6 @@ class _StartupRouterState extends State<StartupRouter> {
     switch (normalizedRole) {
       case AppConstants.roleAdmin:
         return const AdminDashboardScreen();
-      case AppConstants.roleTeleCaller:
-        return const TelecallerDashboardScreen();
-      case AppConstants.rolePickupDropoff:
-        return const PudoDashboardScreen();
       case AppConstants.roleAccountant:
         return const AccountantDashboardScreen();
 

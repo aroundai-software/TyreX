@@ -1517,31 +1517,12 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         return Scaffold(
           backgroundColor: const Color(0xFFF5F7FA),
           appBar: AppBar(
-            leadingWidth: 200,
-            leading: Padding(
-              padding: const EdgeInsets.only(left: 8.0),
-              child: Row(
-                children: [
-                  if (widget.isAdminMode)
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back, color: AppTheme.primaryColor),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  Expanded(
-                    child: Text(
-                      CompanyService().companyName ?? '',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            leading: widget.isAdminMode 
+                ? IconButton(
+                    icon: const Icon(Icons.arrow_back, color: AppTheme.primaryColor),
+                    onPressed: () => Navigator.of(context).pop(),
+                  )
+                : null,
             title: const Text(
               'Job Cards',
               style: TextStyle(

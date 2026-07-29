@@ -222,24 +222,25 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        leadingWidth: 150,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 16.0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              CompanyService().companyName ?? '',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+        title: Column(
+          children: [
+            const Text(
+              'Accountant Dashboard',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
-          ),
+            if (CompanyService().companyName != null && CompanyService().companyName!.isNotEmpty)
+              Text(
+                CompanyService().companyName!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
         ),
-        title: const Text('Accountant Dashboard'),
         centerTitle: true,
         backgroundColor: Colors.white,
         elevation: 0,
@@ -265,6 +266,15 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
           labelColor: AppTheme.primaryColor,
           unselectedLabelColor: AppTheme.textSecondary,
           indicatorColor: AppTheme.primaryColor,
+          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+          labelStyle: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
           tabs: [
             Tab(text: 'Pending ($_pendingCount)'),
             Tab(text: 'Billed (${_billed.length})'),
@@ -314,7 +324,7 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
   Widget _metricChip(IconData icon, String label, String value, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(14),
@@ -326,14 +336,20 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
             Row(
               children: [
                 Icon(icon, color: color, size: 16),
-                const SizedBox(width: 5),
-                Text(label, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    label, 
+                    style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 6),
             Text(
               value,
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: color),
               overflow: TextOverflow.ellipsis,
             ),
           ],

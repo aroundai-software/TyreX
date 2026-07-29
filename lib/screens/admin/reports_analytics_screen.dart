@@ -431,6 +431,8 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final double gap = constraints.maxWidth < 600 ? 8.0 : 12.0;
+        
         if (constraints.maxWidth < 600) {
           // Mobile view: 2x2 grid
           return Column(
@@ -445,7 +447,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                       Colors.blue,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: gap),
                   Expanded(
                     child: _buildSummaryCard(
                       'Completed',
@@ -456,7 +458,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: gap),
               Row(
                 children: [
                   Expanded(
@@ -467,7 +469,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                       Colors.orange,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: gap),
                   Expanded(
                     child: _buildSummaryCard(
                       'Not Started',
@@ -493,7 +495,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                 Colors.blue,
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: gap),
             Expanded(
               child: _buildSummaryCard(
                 'Completed',
@@ -502,7 +504,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                 Colors.green,
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: gap),
             Expanded(
               child: _buildSummaryCard(
                 'Ongoing',
@@ -511,7 +513,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
                 Colors.orange,
               ),
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: gap),
             Expanded(
               child: _buildSummaryCard(
                 'Not Started',
@@ -526,37 +528,52 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.3, end: 0);
   }
 
-  Widget _buildSummaryCard(
-      String title, String value, IconData icon, Color color) {
-    return ModernCard(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildSummaryCard(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(icon, size: 24, color: color),
+            child: Icon(icon, size: 20, color: color),
           ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: color,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                    height: 1.1,
+                  ),
+                ).animate().fadeIn(duration: 400.ms).slideX(begin: -0.1),
+                const SizedBox(height: 2),
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textSecondary,
+                    height: 1.1,
+                  ),
+                ),
+              ],
             ),
-          ).animate().fadeIn(duration: 400.ms).scale(),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppTheme.textSecondary,
-            ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -718,21 +735,19 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
 
           // Results summary
           Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue.shade200),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: const BoxDecoration(
+              color: Colors.transparent,
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline, size: 20, color: Colors.blue.shade700),
+                Icon(Icons.info_outline, size: 16, color: AppTheme.textSecondary),
                 const SizedBox(width: 8),
                 Text(
                   'Showing ${_filteredReports.length} of ${_allReports.length} reports',
-                  style: TextStyle(
-                    color: Colors.blue.shade700,
-                    fontWeight: FontWeight.w600,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 13,
                   ),
                 ),
               ],
@@ -1132,7 +1147,6 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     final vehicle = report['vehicles'];
     final model = vehicle?['vehicle_models'];
 
-    // Define all possible cells
     final Map<String, DataCell> allCellDefinitions = {
       'job_id': DataCell(
         Container(
@@ -1309,15 +1323,9 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: (report['gdrive_folder_url'] as String?)?.isNotEmpty == true
               ? TextButton(
-                  onPressed: () async {
-                    final url = Uri.parse(report['gdrive_folder_url']);
-                    if (await canLaunchUrl(url)) {
-                      await launchUrl(url);
-                    }
-                  },
+                  onPressed: () {},
                   style: TextButton.styleFrom(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   ),
                   child: const Text('View Files'),
                 )
@@ -1329,7 +1337,6 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
       ),
     };
 
-    // Build cells list based on visible columns
     final List<DataCell> cells = [];
     for (final columnKey in visibleColumns) {
       if (allCellDefinitions.containsKey(columnKey)) {

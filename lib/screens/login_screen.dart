@@ -12,8 +12,6 @@ import 'main_dashboard.dart';
 import '../providers/user_provider.dart';
 import '../theme/app_theme.dart';
 import 'admin/admin_dashboard_screen.dart';
-import 'pudo_dashboard_screen.dart';
-import 'telecaller_dashboard_screen.dart';
 import 'accountant/accountant_dashboard_screen.dart';
 
 import '../utils/validators.dart';
@@ -144,22 +142,11 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted) return;
         final role = response['role'];
         
-        // Check if telecaller module is disabled and user is telecaller
-        if (role == AppConstants.roleTeleCaller && !settingsProvider.featureTelecallerModule) {
-          throw AuthenticationException('Telecaller module is currently disabled. Please contact administrator.');
-        }
-        
         Widget targetScreen;
 
         switch (role) {
           case AppConstants.roleAdmin:
             targetScreen = const AdminDashboardScreen();
-            break;
-          case AppConstants.roleTeleCaller:
-            targetScreen = const TelecallerDashboardScreen();
-            break;
-          case AppConstants.rolePickupDropoff:
-            targetScreen = const PudoDashboardScreen();
             break;
           case AppConstants.roleAccountant:
             targetScreen = const AccountantDashboardScreen();
@@ -261,23 +248,11 @@ class _LoginScreenState extends State<LoginScreen> {
           if (!mounted) return;
           final role = cachedUser['role'];
           
-          // Check if telecaller module is disabled and user is telecaller
-          if (role == AppConstants.roleTeleCaller && !settingsProvider.featureTelecallerModule) {
-            _showErrorSnackBar('Telecaller module is currently disabled. Please contact administrator.');
-            return;
-          }
-          
           Widget targetScreen;
 
           switch (role) {
             case AppConstants.roleAdmin:
               targetScreen = const AdminDashboardScreen();
-              break;
-            case AppConstants.roleTeleCaller:
-              targetScreen = const TelecallerDashboardScreen();
-              break;
-            case AppConstants.rolePickupDropoff:
-              targetScreen = const PudoDashboardScreen();
               break;
 
             case AppConstants.roleExecutive:

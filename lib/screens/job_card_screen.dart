@@ -1111,8 +1111,17 @@ class _JobCardScreenState extends State<JobCardScreen> {
     List<Widget> widgets = [];
     for (int i = 0; i < _technicianAssignments.length; i++) {
       var assignment = _technicianAssignments[i];
-      // Filter available techs for the selected role
-      var availableTechs = _allTechnicians.where((t) => t['role'] == assignment['role']).toList();
+      
+      // Get IDs of technicians already assigned in OTHER slots
+      final assignedTechIds = _technicianAssignments
+          .where((a) => a != assignment && a['tech_id'] != null)
+          .map((a) => a['tech_id'])
+          .toSet();
+
+      // Filter available techs for the selected role AND exclude already assigned ones
+      var availableTechs = _allTechnicians.where((t) {
+        return t['role'] == assignment['role'] && !assignedTechIds.contains(t['id']);
+      }).toList();
 
       widgets.add(
         Padding(
@@ -1409,33 +1418,31 @@ class _JobCardScreenState extends State<JobCardScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        leadingWidth: 150,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 16.0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              CompanyService().companyName ?? '',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ),
-        title: const Text(
-          'Job Card',
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 24,
-            color: AppTheme.primaryColor,
-          ),
-        ),
         backgroundColor: Colors.white,
         elevation: 0,
+        title: Column(
+          children: [
+            const Text(
+              'Job Card',
+              style: TextStyle(
+                color: Color(0xFF1E293B),
+                fontWeight: FontWeight.bold,
+                letterSpacing: -0.5,
+              ),
+            ),
+            if (CompanyService().companyName != null && CompanyService().companyName!.isNotEmpty)
+              Text(
+                CompanyService().companyName!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
         centerTitle: true,
       ),
       body: GestureDetector(

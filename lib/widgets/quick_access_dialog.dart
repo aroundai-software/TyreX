@@ -7,8 +7,7 @@ import 'dart:convert';
 import '../theme/app_theme.dart';
 import '../screens/main_dashboard.dart'; 
 
-import '../screens/telecaller_dashboard_screen.dart';
-import '../screens/pudo_dashboard_screen.dart';
+
 
 import 'package:provider/provider.dart';
 import '../providers/user_provider.dart';
@@ -123,23 +122,10 @@ class _QuickAccessDialogState extends State<QuickAccessDialog> {
 
       // Navigate based on role
       Widget targetScreen;
-      String successMessage;
 
       switch (user['role']) {
         case 'executive':
           targetScreen = const MainDashboard(); 
-          successMessage = 'Switched to executive: ${user['username']}';
-          break;
-
-        case 'telecaller': // legacy key
-        case 'tele_caller':
-          targetScreen = const TelecallerDashboardScreen();
-          successMessage = 'Switched to telecaller: ${user['username']}';
-          break;
-        case 'pudo': // legacy key
-        case 'pickup_dropoff':
-          targetScreen = const PudoDashboardScreen();
-          successMessage = 'Switched to PUDO: ${user['username']}';
           break;
         default:
           throw Exception('Unknown user role: ${user['role']}');
@@ -353,22 +339,6 @@ class _QuickAccessDialogState extends State<QuickAccessDialog> {
     }
 
     final sections = <_UserSection>[
-      _UserSection(
-        key: 'telecallers',
-        title: 'Telecallers',
-        icon: Icons.headset_mic_rounded,
-        color: const Color(0xFF14B8A6),
-        users: filteredTelecallers,
-        isVisible: true,
-      ),
-      _UserSection(
-        key: 'pudos',
-        title: 'PUDO Users',
-        icon: Icons.local_shipping_rounded,
-        color: const Color(0xFF6366F1),
-        users: filteredPudos,
-        isVisible: true,
-      ),
       _UserSection(
         key: 'executives',
         title: 'Executives',

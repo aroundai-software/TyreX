@@ -170,7 +170,7 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
         title: const Text('Tyre Catalog'),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
+      body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
@@ -182,12 +182,25 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _editingId == null ? 'Add New Tyre' : 'Edit Tyre',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.tire_repair, color: Colors.teal, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _editingId == null ? 'Add New Tyre' : 'Edit Tyre',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                       if (_editingId != null)
                         TextButton(
@@ -197,31 +210,79 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  TextField(
-                    controller: _brandController,
-                    decoration: const InputDecoration(
-                      labelText: 'Brand *',
-                      hintText: 'e.g., MICHELIN',
-                    ),
-                    textCapitalization: TextCapitalization.characters,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _modelController,
-                    decoration: const InputDecoration(
-                      labelText: 'Model / Pattern *',
-                      hintText: 'e.g., Pilot Sport 4',
-                    ),
-                    textCapitalization: TextCapitalization.words,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _sizeController,
-                    decoration: const InputDecoration(
-                      labelText: 'Size *',
-                      hintText: 'e.g., 205/55 R16',
-                    ),
-                    textCapitalization: TextCapitalization.characters,
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (constraints.maxWidth < 600) {
+                        return Column(
+                          children: [
+                            TextField(
+                              controller: _brandController,
+                              decoration: const InputDecoration(
+                                labelText: 'Brand *',
+                                hintText: 'e.g., MICHELIN',
+                              ),
+                              textCapitalization: TextCapitalization.characters,
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _modelController,
+                              decoration: const InputDecoration(
+                                labelText: 'Model / Pattern *',
+                                hintText: 'e.g., Pilot Sport 4',
+                              ),
+                              textCapitalization: TextCapitalization.words,
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _sizeController,
+                              decoration: const InputDecoration(
+                                labelText: 'Size *',
+                                hintText: 'e.g., 205/55 R16',
+                              ),
+                              textCapitalization: TextCapitalization.characters,
+                            ),
+                          ],
+                        );
+                      }
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _brandController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Brand *',
+                                    hintText: 'e.g., MICHELIN',
+                                  ),
+                                  textCapitalization: TextCapitalization.characters,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextField(
+                                  controller: _modelController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Model / Pattern *',
+                                    hintText: 'e.g., Pilot Sport 4',
+                                  ),
+                                  textCapitalization: TextCapitalization.words,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _sizeController,
+                            decoration: const InputDecoration(
+                              labelText: 'Size *',
+                              hintText: 'e.g., 205/55 R16',
+                            ),
+                            textCapitalization: TextCapitalization.characters,
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   SizedBox(
@@ -239,75 +300,144 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
             const SizedBox(height: 16),
 
             // List of Tyres
-            AppCard(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Tyre Catalog',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+            Expanded(
+              child: AppCard(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Text(
+                          'Tyre Catalog',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      if (_isLoading)
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  if (_tyres.isEmpty && !_isLoading)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(32.0),
-                        child: Text(
-                          'No tyres found.\nAdd one above.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
-                    ),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _tyres.length,
-                    separatorBuilder: (context, index) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final item = _tyres[index];
-                      final desc = '${item['brand']} ${item['model']} ${item['size']}';
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          item['brand'],
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text('${item['model']} - ${item['size']}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
-                              onPressed: () => _editTyre(item),
-                              tooltip: 'Edit',
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${_tyres.length} total',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => _deleteTyre(item['id'], desc),
-                              tooltip: 'Delete',
+                          ),
+                        ),
+                        const Spacer(),
+                        if (_isLoading)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  if (_tyres.isEmpty && !_isLoading)
+                    Padding(
+                      padding: const EdgeInsets.all(48.0),
+                      child: Center(
+                        child: Column(
+                          children: [
+                            Icon(Icons.tire_repair, size: 48, color: Colors.grey.shade300),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No tyres yet',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Add your first tyre above.',
+                              style: TextStyle(
+                                color: AppTheme.textSecondary,
+                              ),
                             ),
                           ],
                         ),
-                      );
-                    },
-                  ),
-                ],
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: ListView.separated(
+                        itemCount: _tyres.length,
+                        separatorBuilder: (context, index) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                        final item = _tyres[index];
+                        final desc = '${item['brand']} ${item['model']} ${item['size']}';
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.teal.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.tire_repair, color: Colors.teal, size: 16),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item['brand'],
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${item['model']} - ${item['size']}',
+                                      style: const TextStyle(
+                                        color: AppTheme.textSecondary,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
+                                    onPressed: () => _editTyre(item),
+                                    tooltip: 'Edit',
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                    onPressed: () => _deleteTyre(item['id'], desc),
+                                    tooltip: 'Delete',
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],

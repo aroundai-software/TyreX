@@ -23,12 +23,17 @@ import '../providers/admin_settings_provider.dart';
 import '../utils/app_constants.dart';
 import '../utils/validators.dart';
 import '../utils/haptic_utils.dart';
-import 'package:intl/intl.dart'; // 
+import 'package:intl/intl.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import '../widgets/material_search_dropdown.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../services/notification_service.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
 class UpdateScreen extends StatefulWidget {
@@ -1333,6 +1338,111 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     }
   }
 
+  Future<void> _shareWarrantyPDF() async {
+    final barcodeJson = _scannedBarcodeText ?? _barcodeController.text;
+    if (barcodeJson.isEmpty || barcodeJson == '{}') {
+      _showError('No warranty QR codes recorded.');
+      return;
+    }
+
+    Map<String, dynamic> barcodeData = {};
+    try {
+      barcodeData = jsonDecode(barcodeJson) as Map<String, dynamic>;
+    } catch (e) {
+      _showError('Could not parse warranty data. Make sure they are JSON.');
+      return;
+    }
+
+    final String jobIdStr = (_currentJobCardId?.isNotEmpty == true) 
+        ? _currentJobCardId! 
+        : _currentReportId?.toString() ?? 'N/A';
+    final vehicleNo = _currentVehicleNo ?? 'N/A';
+    
+    final reportProvider = Provider.of<ReportProvider>(context, listen: false);
+    final report = reportProvider.reports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => <String, dynamic>{});
+    final clientName = report['Owner name'] ?? 'N/A';
+    final clientPhone = report['client_phone'] ?? 'N/A';
+    final vehicleBrand = report['vehicles']?['vehicle_models']?['brand'] ?? 'N/A';
+    final vehicleModel = report['vehicles']?['vehicle_models']?['Model name'] ?? 'N/A';
+
+    try {
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            return [
+              pw.Header(
+                level: 0,
+                child: pw.Text('Tyre Warranty Details', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+              pw.SizedBox(height: 20),
+              pw.Wrap(
+                spacing: 20,
+                runSpacing: 20,
+                children: barcodeData.entries.map((entry) {
+                  final position = entry.key;
+                  final details = entry.value as Map<String, dynamic>;
+                  final qr = details['qr']?.toString() ?? '';
+                  final spec = details['spec']?.toString() ?? '';
+
+                  return pw.Container(
+                    width: 200,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey),
+                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                    ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text(position, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                        pw.SizedBox(height: 5),
+                        if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 12)),
+                        pw.SizedBox(height: 10),
+                        if (qr.isNotEmpty)
+                          pw.BarcodeWidget(
+                            barcode: pw.Barcode.qrCode(),
+                            data: qr,
+                            width: 120,
+                            height: 120,
+                          ),
+                        if (qr.isNotEmpty)
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.only(top: 8),
+                            child: pw.Text(qr, style: const pw.TextStyle(fontSize: 8)),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ];
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/job_${jobIdStr}_warranty_qrs.pdf');
+      await file.writeAsBytes(bytes);
+
+      final String message = 'Warranty details for Job $jobIdStr (Vehicle: $vehicleNo)';
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: message,
+        subject: 'Warranty details for Job $jobIdStr',
+      );
+    } catch (e) {
+      _showError('Error generating or sharing PDF: $e');
+    }
+  }
 
   
   String _getBrandModel(Map<String, dynamic> job) {
@@ -2452,6 +2562,15 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           onPressed: isFormBusy ? null : _resetUpdateFormComplete,
           tooltip: 'Close Form',
         ),
+        actions: [
+          if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText!.startsWith('{')) || 
+              (_barcodeController.text.isNotEmpty && _barcodeController.text.startsWith('{')))
+            IconButton(
+              icon: const Icon(Icons.share, color: AppTheme.primaryColor),
+              onPressed: _shareWarrantyPDF,
+              tooltip: 'Share QRs',
+            ),
+        ],
         backgroundColor: Colors.white,
         elevation: 0,
       ),
@@ -3696,21 +3815,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                           ),
                           if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty) || _scannedBarcodeImageUrl != null) ...[
                             if (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.qr_code, size: 20, color: Colors.blueGrey),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        _scannedBarcodeText!,
-                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              _buildBarcodeContent(_scannedBarcodeText!),
                             if (_scannedBarcodeImageUrl != null)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 16.0),
@@ -3758,26 +3863,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             const Divider(),
                             const SizedBox(height: 8),
                           ] else if (_barcodeController.text.isNotEmpty) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.qr_code, size: 20, color: Colors.blueGrey),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _barcodeController.text,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                    ),
-                                  ),
-                                  if (isEditable)
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
-                                      onPressed: _scanBarcode,
-                                    ),
-                                ],
-                              ),
-                            ),
+                            _buildBarcodeContent(_barcodeController.text),
                             if (_newBarcodeImageBytes != null)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 16.0),
@@ -4158,6 +4244,92 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         ],
       ),
     );
+  }
+
+  Widget _buildBarcodeContent(String barcodeContent) {
+    bool isJson = false;
+    Map<String, dynamic> barcodeData = {};
+    
+    try {
+      barcodeData = jsonDecode(barcodeContent) as Map<String, dynamic>;
+      isJson = barcodeData.isNotEmpty;
+    } catch (_) {
+      isJson = false;
+    }
+
+    if (isJson) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16.0),
+        child: Wrap(
+          spacing: 16.0,
+          runSpacing: 20.0,
+          children: barcodeData.entries.map((entry) {
+            final position = entry.key;
+            final details = entry.value as Map<String, dynamic>;
+            final qr = details['qr']?.toString() ?? '';
+            final spec = details['spec']?.toString() ?? '';
+
+            return SizedBox(
+              width: 150,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    position.toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (spec.isNotEmpty)
+                    Text(
+                      spec,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  if (qr.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                        color: Colors.white,
+                      ),
+                      child: QrImageView(
+                        data: qr,
+                        version: QrVersions.auto,
+                        size: 130.0,
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }).toList(),
+        ),
+      );
+    } else {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          children: [
+            const Icon(Icons.qr_code, size: 20, color: Colors.blueGrey),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                barcodeContent,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
   }
 }
 

@@ -16,13 +16,15 @@ import '../screens/multi_wheel_camera_screen.dart';
 import '../screens/number_plate_scanner_screen.dart';
 import '../screens/odometer_camera_screen.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-
-// ✅ NEW IMPORTS
+import 'package:url_launcher/url_launcher.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../utils/app_constants.dart';
 import '../utils/validators.dart';
 import '../utils/vehicle_number_utils.dart';
 import '../widgets/error_display.dart';
-
+import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
+import 'package:share_plus/share_plus.dart';
 // Existing imports
 import '../services/ocr_service.dart';
 import '../services/supabase_service.dart';
@@ -62,6 +64,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _newClientMobileController = TextEditingController();
   final _odometerController = TextEditingController();
   final _complaintInputController = TextEditingController();
+  final FocusNode _complaintFocusNode = FocusNode();
 
   // Owner Master Field
   final _ownerGstController = TextEditingController();
@@ -106,8 +109,11 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final Map<String, XFile> _wheelPhotos = {};
   XFile? _vehiclePhoto;
   XFile? _odometerPhoto;
-  String? _barcode;
-  Uint8List? _barcodeImageBytes;
+  
+  // Tyre Warranty Details
+  final Map<String, TextEditingController> _tyreQRControllers = {};
+  final Map<String, TextEditingController> _tyreSpecControllers = {};
+  final Map<String, Uint8List> _tyreQRImages = {};
   
   final List<String> _requiredWheels = [
     'Front Left',
@@ -135,7 +141,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _fetchVehicleModels();
     _fetchTechnicians();
     _fetchServiceCatalog();
+    _fetchTyreCatalog();
     
+    // Initialize tyre controllers
+    for (String wheel in _requiredWheels) {
+      _tyreQRControllers[wheel] = TextEditingController();
+      _tyreSpecControllers[wheel] = TextEditingController();
+    }
+
     // Prefill customer details if available (from bookings)
     if (widget.customerName != null) {
       _newClientNameController.text = widget.customerName!;
@@ -173,8 +186,25 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
+  List<Map<String, dynamic>> _tyreCatalog = [];
+
+  Future<void> _fetchTyreCatalog() async {
+    try {
+      final supabaseService = SupabaseService();
+      final catalog = await supabaseService.getTyreCatalog();
+      if (mounted) {
+        setState(() {
+          _tyreCatalog = catalog;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching tyre catalog: $e');
+    }
+  }
+
   @override
   void dispose() {
+    _complaintFocusNode.dispose();
     _vehicleNumberController.dispose();
     _newVehicleNameController.dispose();
     _newColorController.dispose();
@@ -187,6 +217,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _ownerGstController.dispose();
     _audioRecorder.dispose();
     _audioPlayer.dispose();
+    
+    for (var controller in _tyreQRControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _tyreSpecControllers.values) {
+      controller.dispose();
+    }
+    
     super.dispose();
   }
 
@@ -215,8 +253,11 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _selectedModelName = null;
       _wheelPhotos.clear();
       _vehiclePhoto = null;
-      _barcode = null;
-      _barcodeController.clear();
+      for (String wheel in _requiredWheels) {
+        _tyreQRControllers[wheel]?.clear();
+        _tyreSpecControllers[wheel]?.clear();
+      }
+      _tyreQRImages.clear();
       _audioPath = null;
       _isRecording = false;
       _damageMarks.clear();
@@ -540,11 +581,24 @@ class _JobCardScreenState extends State<JobCardScreen> {
         return;
       }
 
+      // Collect tyre warranty details
+      Map<String, Map<String, String>> tyreDetails = {};
+      for (String wheel in _requiredWheels) {
+        final qr = _tyreQRControllers[wheel]?.text.trim() ?? '';
+        final spec = _tyreSpecControllers[wheel]?.text.trim() ?? '';
+        if (qr.isNotEmpty || spec.isNotEmpty) {
+          tyreDetails[wheel] = {};
+          if (qr.isNotEmpty) tyreDetails[wheel]!['qr'] = qr;
+          if (spec.isNotEmpty) tyreDetails[wheel]!['spec'] = spec;
+        }
+      }
+      final String barcodeJson = tyreDetails.isNotEmpty ? jsonEncode(tyreDetails) : '';
+
       final Map<String, dynamic> insertData = {
         'vehicle_id': _currentVehicleId,
         'executive_id': executiveId, // Passes int?
         'complaint': jsonEncode(_complaints),
-        if (_barcode != null && _barcode!.isNotEmpty) 'barcode': _barcode,
+        if (barcodeJson.isNotEmpty) 'barcode': barcodeJson,
         'status': AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
         'started_at': DateTime.now().toIso8601String(), // Start the timer immediately upon creation
         'marks': jsonEncode(marksJson),
@@ -569,12 +623,13 @@ class _JobCardScreenState extends State<JobCardScreen> {
       // Get the inserted report ID by searching for the latest report for this vehicle
       final inserted = await supabase
           .from('reports')
-          .select('id')
+          .select('id, job_card_id')
           .eq('vehicle_id', _currentVehicleId!)
           .order('created_at', ascending: false)
           .limit(1)
           .single();
       final int jobId = inserted['id'] as int;
+      final String? jobCardId = inserted['job_card_id'] as String?;
 
       // Upload media to Supabase Storage
       List<String> uploadedUrls = [];
@@ -594,8 +649,10 @@ class _JobCardScreenState extends State<JobCardScreen> {
         if (url != null) uploadedUrls.add(url);
       }
       
-      if (_barcodeImageBytes != null) {
-        final url = await SupabaseService().uploadJobMedia(_barcodeImageBytes!, 'job_${jobId}_barcode_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      for (final entry in _tyreQRImages.entries) {
+        final position = entry.key;
+        final imageBytes = entry.value;
+        final url = await SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg');
         if (url != null) uploadedUrls.add(url);
       }
 
@@ -650,6 +707,12 @@ class _JobCardScreenState extends State<JobCardScreen> {
         await Provider.of<ReportProvider>(context, listen: false)
             .refresh(user['id']);
         
+        // Show WhatsApp share dialog if tyre details exist
+        if (tyreDetails.isNotEmpty) {
+          final String displayJobId = jobCardId?.isNotEmpty == true ? jobCardId! : jobId.toString();
+          await _showWhatsAppShareDialog(displayJobId, tyreDetails);
+        }
+
         // If this was created from a direct booking, navigate back with success
         if (widget.bookingId != null) {
           Navigator.of(context).pop(true);
@@ -661,6 +724,122 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _showErrorSnackBar('Failed to save Job Card. Error: $error');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _showWhatsAppShareDialog(String jobIdStr, Map<String, Map<String, String>> tyreDetails) async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Share Warranty Details'),
+        content: const Text('Would you like to share the tyre warranty details via WhatsApp to the data entry team?'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('Skip'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _shareToWhatsApp(jobIdStr, tyreDetails);
+            },
+            icon: const Icon(Icons.share),
+            label: const Text('Share to WhatsApp'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _shareToWhatsApp(String jobIdStr, Map<String, Map<String, String>> tyreDetails) async {
+    final vehicleNo = _vehicleDetails?['Vehicle Number'] ?? _vehicleNumberController.text.trim();
+    final clientName = _newClientNameController.text.trim();
+    final clientPhone = _newClientPhoneController.text.trim();
+    final vehicleBrand = _vehicleDetails?['vehicle_models']?['brand'] ?? 'N/A';
+    final vehicleModel = _vehicleDetails?['vehicle_models']?['Model name'] ?? 'N/A';
+
+    try {
+      final pdf = pw.Document();
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            return [
+              pw.Header(
+                level: 0,
+                child: pw.Text('Tyre Warranty Details', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
+              ),
+              pw.SizedBox(height: 10),
+              pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+              pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+              pw.SizedBox(height: 20),
+              pw.Wrap(
+                spacing: 20,
+                runSpacing: 20,
+                children: tyreDetails.entries.map((entry) {
+                  final position = entry.key;
+                  final details = entry.value;
+                  final qr = details['qr'] ?? '';
+                  final spec = details['spec'] ?? '';
+
+                  return pw.Container(
+                    width: 200,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey),
+                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                    ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text(position, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                        pw.SizedBox(height: 5),
+                        if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 12)),
+                        pw.SizedBox(height: 10),
+                        if (qr.isNotEmpty)
+                          pw.BarcodeWidget(
+                            barcode: pw.Barcode.qrCode(),
+                            data: qr,
+                            width: 120,
+                            height: 120,
+                          ),
+                        if (qr.isNotEmpty)
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.only(top: 8),
+                            child: pw.Text(qr, style: const pw.TextStyle(fontSize: 8)),
+                          ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+            ];
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      
+      // Save PDF to temp directory
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/job_${jobIdStr}_warranty_qrs.pdf');
+      await file.writeAsBytes(bytes);
+
+      // Share PDF
+      final String message = 'Warranty details for Job Card $jobIdStr (Vehicle: $vehicleNo)';
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: message,
+        subject: 'Warranty details for Job Card $jobIdStr',
+      );
+    } catch (e) {
+      _showErrorSnackBar('Error generating or sharing PDF: $e');
     }
   }
 
@@ -1008,9 +1187,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     return widgets;
   }
 
-  final _barcodeController = TextEditingController();
-
-  Future<void> _scanBarcode() async {
+  Future<void> _scanTyreQR(String wheel) async {
     try {
       final result = await Navigator.push(
         context,
@@ -1024,17 +1201,134 @@ class _JobCardScreenState extends State<JobCardScreen> {
         
         if (barcodeScanRes != null && barcodeScanRes != '-1' && barcodeScanRes.isNotEmpty) {
           setState(() {
-            _barcode = barcodeScanRes;
-            _barcodeController.text = barcodeScanRes;
+            _tyreQRControllers[wheel]?.text = barcodeScanRes;
             if (imageBytes != null) {
-              _barcodeImageBytes = imageBytes;
+              _tyreQRImages[wheel] = imageBytes;
             }
           });
         }
       }
     } catch (e) {
-      _showErrorSnackBar('Failed to get barcode: $e');
+      _showErrorSnackBar('Failed to get QR for $wheel: $e');
     }
+  }
+
+  Widget _buildTyreWarrantyRow(String wheel) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            wheel,
+            style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _tyreQRControllers[wheel],
+                  decoration: const InputDecoration(
+                    hintText: 'Enter/Scan QR Code',
+                    prefixIcon: Icon(Icons.qr_code, size: 18),
+                    isDense: true,
+                  ),
+                  onChanged: (val) {
+                    if (val.isEmpty) {
+                      setState(() {
+                        _tyreQRImages.remove(wheel);
+                      });
+                    }
+                  }
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => _scanTyreQR(wheel),
+                icon: const Icon(Icons.qr_code_scanner, size: 18),
+                label: const Text('Scan'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.primaryColor,
+                  backgroundColor: Colors.blue.shade50,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          RawAutocomplete<String>(
+            textEditingController: _tyreSpecControllers[wheel],
+            focusNode: FocusNode(),
+            optionsBuilder: (TextEditingValue textEditingValue) {
+              if (textEditingValue.text.isEmpty) {
+                return _tyreCatalog.map((t) => '${t['brand']} ${t['model']} ${t['size']}');
+              }
+              return _tyreCatalog
+                  .map((t) => '${t['brand']} ${t['model']} ${t['size']}')
+                  .where((spec) => spec.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: const InputDecoration(
+                  hintText: 'Select or type Tyre Specs',
+                  prefixIcon: Icon(Icons.description, size: 18),
+                  suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
+                  isDense: true,
+                ),
+                onSubmitted: (_) => onFieldSubmitted(),
+              );
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              return Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4.0,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                    child: ListView.builder(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: options.length,
+                      itemBuilder: (context, index) {
+                        final String option = options.elementAt(index);
+                        return InkWell(
+                          onTap: () => onSelected(option),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Text(option),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          if (_tyreQRControllers[wheel]?.text.isNotEmpty == true) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+                color: Colors.white,
+              ),
+              child: QrImageView(
+                data: _tyreQRControllers[wheel]!.text,
+                version: QrVersions.auto,
+                size: 100.0,
+              ),
+            ),
+          ],
+          const Divider(),
+        ],
+      ),
+    );
   }
 
   Future<void> _toggleRecording() async {
@@ -1144,27 +1438,30 @@ class _JobCardScreenState extends State<JobCardScreen> {
         elevation: 0,
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildSearchCard(),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildSearchCard(),
 
-            // ✅ Use shimmer loading
-            if (_isLoading &&
-                _vehicleDetails == null &&
-                !_showCreateVehicleForm)
-              const Padding(
-                padding: EdgeInsets.all(32.0),
-                child: Center(child: CircularProgressIndicator()),
-              ),
+              // ✅ Use shimmer loading
+              if (_isLoading &&
+                  _vehicleDetails == null &&
+                  !_showCreateVehicleForm)
+                const Padding(
+                  padding: EdgeInsets.all(32.0),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
 
-            if (_vehicleDetails != null)
-              _buildVehicleDetailsCard(_vehicleDetails!),
-            if (_showCreateVehicleForm) _buildCreateVehicleForm(),
-            if (_vehicleDetails != null) _buildNewComplaintCard(),
-          ],
+              if (_vehicleDetails != null)
+                _buildVehicleDetailsCard(_vehicleDetails!),
+              if (_showCreateVehicleForm) _buildCreateVehicleForm(),
+              if (_vehicleDetails != null) _buildNewComplaintCard(),
+            ],
+          ),
         ),
       ),
     );
@@ -1727,7 +2024,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
               Expanded(
                 child: RawAutocomplete<String>(
                   textEditingController: _complaintInputController,
-                  focusNode: FocusNode(),
+                  focusNode: _complaintFocusNode,
                   optionsBuilder: (TextEditingValue textEditingValue) {
                     if (textEditingValue.text.isEmpty) {
                       return _serviceCatalog.map((s) => s['name'].toString());
@@ -1789,6 +2086,10 @@ class _JobCardScreenState extends State<JobCardScreen> {
             ],
           ),
           const SizedBox(height: 24),
+          const FormLabel(text: 'Tyre Warranty Details (QRs & Specs)'),
+          const SizedBox(height: 8),
+          ..._requiredWheels.map((wheel) => _buildTyreWarrantyRow(wheel)).toList(),
+          const Divider(height: 32),
           // ✅ Conditionally show damage marking section based on feature flag
           Consumer<AdminSettingsProvider>(
             builder: (context, settingsProvider, _) {
@@ -1891,60 +2192,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
               */
             },
           ),
-          const FormLabel(text: 'Scan Barcode'),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _barcodeController,
-                  decoration: const InputDecoration(
-                    hintText: 'Enter or scan barcode',
-                    prefixIcon: Icon(Icons.qr_code),
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      _barcode = value;
-                      // Clear image if they manually edit the barcode
-                      if (value != _barcode) {
-                        _barcodeImageBytes = null;
-                      }
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(width: 16),
-              TextButton.icon(
-                onPressed: _scanBarcode,
-                icon: const Icon(Icons.qr_code_scanner, size: 18),
-                label: const Text('Scan'),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppTheme.primaryColor,
-                  backgroundColor: Colors.blue.shade50,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                ),
-              ),
-            ],
-          ),
-          if (_barcodeImageBytes != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              height: 150,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.memory(
-                  _barcodeImageBytes!,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ),
-          ],
-          const Divider(height: 32),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [

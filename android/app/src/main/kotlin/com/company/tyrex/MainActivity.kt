@@ -1,4 +1,4 @@
-package com.example.autofix_app
+package com.company.tyrex
 
 import io.flutter.embedding.android.FlutterActivity
 

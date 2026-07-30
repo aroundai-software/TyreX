@@ -114,7 +114,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -660,12 +660,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     );
   }
 
-  Future<void> _saveUpdate() async {
+  Future<void> _saveUpdate({bool convertToJobCard = false}) async {
     // ✅ Check local state
     if (_currentReportId == null || _isSubmitting) return;
 
     // ✅ Determine target tab for navigation
-    final int targetTabIndex = 0; // Default to Pending Jobs
+    int targetTabIndex = 1; // Default to Pending Jobs
+    if (_openedFromTab == 'Work in Progress') targetTabIndex = 3;
+    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 1 : 0;
 
 
 
@@ -701,6 +703,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     if (_openedFromTab == 'Work in Progress') {
       updateData['status'] = AppConstants.statusCompleted;
       updateData['completed_at'] = DateTime.now().toIso8601String();
+    } else if (_openedFromTab == 'Drafts' && convertToJobCard) {
+      updateData['status'] = AppConstants.statusNotStarted;
+      updateData['started_at'] = DateTime.now().toIso8601String();
     } else {
       // It's from 'Jobs' tab (Pending), so it should just save as 'Work in Progress' if they updated something
       // or we can just leave it to whatever it currently is. 
@@ -1498,6 +1503,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
         final unassignedJobs = reportProvider.unassignedReports;
         final allReports = reportProvider.reports;
+
+        final draftJobs = allReports
+            .where((r) => r['status'] == AppConstants.statusDraft)
+            .toList();
+
+        final pendingJobs = allReports
+            .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress)
+            .toList();
             final pendingJobs = allReports
         .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
         .toList();
@@ -1550,6 +1563,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     List<Widget> tabs = [];
                     
                     tabs.addAll([
+                      _buildProfessionalTab('Drafts', draftJobs.length),
                       _buildProfessionalTab('Jobs', pendingJobs.length),
                       _buildProfessionalTab('Work in Progress', workInProgressJobs.length),
                       _buildProfessionalTab('Completed', completedJobs.length),
@@ -1588,6 +1602,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     builder: (context, adminSettings, _) {
                       List<Widget> tabViews = [];
                       tabViews.addAll([
+                        _buildJobList(draftJobs, 'No saved drafts.', 'Drafts'),
                         _buildJobList(pendingJobs, 'No jobs are currently pending.', 'Jobs'),
                         _buildJobList(workInProgressJobs, 'No jobs currently in progress.', 'Work in Progress'),
                         _buildJobList(completedJobs, 'No completed jobs.', 'Completed'),
@@ -1902,6 +1917,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   );
                                 }).toList(),
                               ],
+                              if (job['started_at'] != null && job['status'] != AppConstants.statusDraft) ...[
                               if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                 const SizedBox(height: 6),
                                 Row(
@@ -2102,6 +2118,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                         color: Color(0xFF9CA3AF),
                                       ),
                                     ),
+                                  if (job['started_at'] != null && job['status'] != AppConstants.statusDraft) ...[
                                   if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                     const SizedBox(height: 6),
                                     Row(
@@ -2824,7 +2841,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           
           if (_currentBookingData != null) const SizedBox(height: 16),
           
-          if (_currentStartedAt != null)
+          if (_currentStartedAt != null && _currentStatus != AppConstants.statusDraft)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -2914,7 +2931,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               ),
             ),
 
-          if (_currentStartedAt != null) const SizedBox(height: 16),
+          if (_currentStartedAt != null && _currentStatus != AppConstants.statusDraft) const SizedBox(height: 16),
 
 
           // Customer Approved Services Section
@@ -4003,32 +4020,69 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               child: Column(
                 children: [
                   // Action Button (Dynamic)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: isFormBusy ? null : (_openedFromTab == 'Work in Progress' ? _promptAfterJobPhotos : _saveUpdate),
-                      icon: isFormBusy
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.check_circle_rounded, size: 20),
-                      label: Text(
-                        _openedFromTab == 'Work in Progress' ? 'Complete Job' : 'Save Updates',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _openedFromTab == 'Work in Progress' ? const Color(0xFF10B981) : AppTheme.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  if (_openedFromTab == 'Drafts') ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: isFormBusy ? null : () => _saveUpdate(convertToJobCard: true),
+                        icon: isFormBusy
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.rocket_launch_rounded, size: 20),
+                        label: const Text('Convert to Job Card', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF10B981),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
                         ),
-                        elevation: 0,
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: isFormBusy ? null : () => _saveUpdate(),
+                        icon: isFormBusy
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
+                            : const Icon(Icons.save, size: 20),
+                        label: const Text('Save Draft Updates', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.primaryColor,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          side: const BorderSide(color: AppTheme.primaryColor),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: isFormBusy ? null : (_openedFromTab == 'Work in Progress' ? _promptAfterJobPhotos : () => _saveUpdate()),
+                        icon: isFormBusy
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check_circle_rounded, size: 20),
+                        label: Text(
+                          _openedFromTab == 'Work in Progress' ? 'Complete Job' : 'Save Updates',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _openedFromTab == 'Work in Progress' ? const Color(0xFF10B981) : AppTheme.primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
+                        ),
+                      ),
+                    ),
+                  ]
                 ],
               ),
             ),

@@ -1499,7 +1499,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         final unassignedJobs = reportProvider.unassignedReports;
         final allReports = reportProvider.reports;
             final pendingJobs = allReports
-        .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress)
+        .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
         .toList();
             
         final workInProgressJobs = allReports
@@ -1790,7 +1790,24 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       color: AppTheme.textPrimary,
                                     ),
                                   ),
-                                  if (approvedList.isNotEmpty)
+                                  if (job['status'] == AppConstants.statusCancelled)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.shade50,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: Colors.red.shade200),
+                                      ),
+                                      child: const Text(
+                                        'CANCELLED',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.red,
+                                        ),
+                                      ),
+                                    )
+                                  else if (approvedList.isNotEmpty)
                                     Text(
                                       '${approvedList.length} service${approvedList.length > 1 ? 's' : ''} approved',
                                       style: const TextStyle(
@@ -1885,7 +1902,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   );
                                 }).toList(),
                               ],
-                              if (job['started_at'] != null) ...[
+                              if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                 const SizedBox(height: 6),
                                 Row(
                                   children: [
@@ -1907,7 +1924,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             ],
                           ),
                         ),
-                        if (job['status'] != AppConstants.statusCompleted)
+                        if (job['status'] != AppConstants.statusCompleted && job['status'] != AppConstants.statusCancelled)
                           PopupMenuButton<String>(
                             icon: const Icon(
                               Icons.more_vert,
@@ -2085,7 +2102,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                         color: Color(0xFF9CA3AF),
                                       ),
                                     ),
-                                  if (job['started_at'] != null) ...[
+                                  if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                     const SizedBox(height: 6),
                                     Row(
                                       children: [
@@ -2510,7 +2527,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     final showWhatsAppButton = !_hasCustomerApproval && settingsProvider.featureWhatsappApproval;
     // ✅ Use the local submission state
     final isFormBusy = _isSubmitting;
-    final bool isEditable = _openedFromTab == 'Jobs';
+    final reportProvider = Provider.of<ReportProvider>(context, listen: false);
+    final currentJob = reportProvider.reports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => reportProvider.unassignedReports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => <String, dynamic>{}));
+    final bool isCancelled = currentJob['status'] == AppConstants.statusCancelled;
+    final bool isEditable = _openedFromTab == 'Jobs' && !isCancelled;
 
     if (kDebugMode) {
       debugPrint('--- _buildUpdateForm Visibility Check ---');
@@ -3977,7 +3997,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           const SizedBox(height: 24),
           
           // Action Buttons
-          if (_openedFromTab != 'Completed')
+          if (_openedFromTab != 'Completed' && !isCancelled)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
@@ -4013,7 +4033,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               ),
             ),
           
-          if (_openedFromTab != 'Completed')
+          if (_openedFromTab != 'Completed' && !isCancelled)
             const SizedBox(height: 24),
         ],
       ),

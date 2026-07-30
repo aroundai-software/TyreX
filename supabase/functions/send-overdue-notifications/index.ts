@@ -122,7 +122,9 @@ Deno.serve(async (_req) => {
     const intervalMin = parseInt(String(settingRow?.setting_value ?? 60))
     const repeatMin = 30 // fixed repeat interval after first reminder
 
-    const now = new Date()
+    const utcNow = new Date()
+    // Convert UTC 'now' to IST 'now' to match the database's assumption of time
+    const now = new Date(utcNow.getTime() + 5.5 * 60 * 60 * 1000)
     const firstCutoff = new Date(now.getTime() - intervalMin * 60_000)
     const repeatCutoff = new Date(now.getTime() - repeatMin * 60_000)
 

@@ -82,6 +82,53 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
   // Track notified overdue jobs
   final Set<int> _notifiedOverdueJobs = {};
+  Timer? _overdueCheckTimer;
+
+  void _checkOverdueJobs() {
+    if (!mounted) return;
+    try {
+      final reportProvider = Provider.of<ReportProvider>(context, listen: false);
+      final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
+      final int threshold = adminSettings.overdueMinutesThreshold;
+      
+      final workInProgressJobs = reportProvider.reports
+          .where((r) => r['status'] == AppConstants.statusWorkInProgress)
+          .toList();
+
+      for (var job in workInProgressJobs) {
+        if (job['started_at'] != null) {
+          final startTime = DateTime.tryParse(job['started_at']);
+          if (startTime != null) {
+            final minutesRunning = DateTime.now().difference(startTime).inMinutes;
+            if (minutesRunning > threshold) {
+              final int jobId = job['id'];
+              if (!_notifiedOverdueJobs.contains(jobId)) {
+                _notifiedOverdueJobs.add(jobId);
+                
+                String overdueText = '';
+                final overdueBy = minutesRunning - threshold;
+                if (overdueBy >= 60) {
+                  final hrs = overdueBy ~/ 60;
+                  final mins = overdueBy % 60;
+                  overdueText = mins > 0 ? '$hrs hr $mins min' : '$hrs hr${hrs == 1 ? '' : 's'}';
+                } else {
+                  overdueText = '$overdueBy min';
+                }
+
+                NotificationService().showLocalNotification(
+                  title: 'Job Overdue!',
+                  body: 'Job #${job['job_card_id'] ?? jobId} is overdue by $overdueText.',
+                  payload: jobId.toString(),
+                );
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking overdue jobs: $e');
+    }
+  }
 
   // ✅ Add state variable for remarks
   String? _rejectionRemarks;
@@ -114,9 +161,13 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(() {
       if (mounted) setState(() {});
+    });
+
+    _overdueCheckTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      _checkOverdueJobs();
     });
 
     // ✅ Better initialization
@@ -199,6 +250,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   @override
   void dispose() {
     _tabController.dispose();
+    _overdueCheckTimer?.cancel();
     _suggestionTextController.dispose();
     _suggestionAmountController.dispose();
     _deliveryDateController.dispose();
@@ -667,7 +719,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     // ✅ Determine target tab for navigation
     int targetTabIndex = 1; // Default to Pending Jobs
     if (_openedFromTab == 'Work in Progress') targetTabIndex = 3;
-    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 1 : 0;
+    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 2 : 0;
 
 
 
@@ -704,7 +756,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       updateData['status'] = AppConstants.statusCompleted;
       updateData['completed_at'] = DateTime.now().toIso8601String();
     } else if (_openedFromTab == 'Drafts' && convertToJobCard) {
-      updateData['status'] = AppConstants.statusNotStarted;
+      updateData['status'] = AppConstants.statusWorkInProgress;
       updateData['started_at'] = DateTime.now().toIso8601String();
     } else {
       // It's from 'Jobs' tab (Pending), so it should just save as 'Work in Progress' if they updated something
@@ -1437,8 +1489,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       await file.writeAsBytes(bytes);
 
       final String message = 'Warranty details for Job $jobIdStr (Vehicle: $vehicleNo)';
-      await Share.shareXFiles(
-        [XFile(file.path)],
+      await Share.shareFiles(
+        [file.path],
         text: message,
         subject: 'Warranty details for Job $jobIdStr',
       );
@@ -1498,7 +1550,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
         if (_showUpdateForm) {
           // ✅ We no longer need to pass reportProvider here for isLoading
-          return _buildUpdateForm(settingsProvider);
+          return PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, result) {
+              if (didPop) return;
+              _resetUpdateFormComplete();
+            },
+            child: _buildUpdateForm(settingsProvider),
+          );
         }
 
         final unassignedJobs = reportProvider.unassignedReports;
@@ -1518,6 +1577,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             
         final completedJobs = allReports
             .where((r) => r['status'] == AppConstants.statusCompleted)
+            .toList();
+            
+        final cancelledJobs = allReports
+            .where((r) => r['status'] == AppConstants.statusCancelled)
             .toList();
             
         // Direct bookings tab removed per requirements
@@ -1564,6 +1627,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                       _buildProfessionalTab('Jobs', pendingJobs.length),
                       _buildProfessionalTab('Work in Progress', workInProgressJobs.length),
                       _buildProfessionalTab('Completed', completedJobs.length),
+                      _buildProfessionalTab('Cancelled', cancelledJobs.length),
                     ]);
                     
                     return TabBar(
@@ -1603,6 +1667,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         _buildJobList(pendingJobs, 'No jobs are currently pending.', 'Jobs'),
                         _buildJobList(workInProgressJobs, 'No jobs currently in progress.', 'Work in Progress'),
                         _buildJobList(completedJobs, 'No completed jobs.', 'Completed'),
+                        _buildJobList(cancelledJobs, 'No cancelled jobs.', 'Cancelled'),
                       ]);
                       
                       return TabBarView(
@@ -1714,9 +1779,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                 } else {
                   overdueText = '$overdueBy min';
                 }
-                
-                final int jobId = job['id'];
-                
               }
             }
           }
@@ -1829,6 +1891,27 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                         color: Color(0xFF6B7280), // Gray for draft
                                       ),
                                     ),
+                                  
+                                  if (job['status'] == AppConstants.statusCancelled)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEE2E2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                                      ),
+                                      child: const Text('Cancelled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB91C1C))),
+                                    ),
+                                  if (job['status'] == AppConstants.statusDraft)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF3F4F6),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFFD1D5DB)),
+                                      ),
+                                      child: const Text('Draft', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF4B5563))),
+                                    ),
 
                                   // Add source label
                                   if (job['created_by_pudo_id'] != null || job['booking_id'] != null)
@@ -1919,7 +2002,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             ],
                           ),
                         ),
-                        if (job['status'] != AppConstants.statusCompleted)
+                        if (job['status'] != AppConstants.statusCompleted && job['status'] != AppConstants.statusCancelled)
                           PopupMenuButton<String>(
                             icon: const Icon(
                               Icons.more_vert,
@@ -2522,7 +2605,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     final showWhatsAppButton = !_hasCustomerApproval && settingsProvider.featureWhatsappApproval;
     // ✅ Use the local submission state
     final isFormBusy = _isSubmitting;
-    final bool isEditable = _openedFromTab == 'Jobs';
+    final bool isEditable = _openedFromTab == 'Jobs' || _openedFromTab == 'Drafts';
 
     if (kDebugMode) {
       debugPrint('--- _buildUpdateForm Visibility Check ---');

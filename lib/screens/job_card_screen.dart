@@ -65,6 +65,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _newClientMobileController = TextEditingController();
   final _odometerController = TextEditingController();
   final _complaintInputController = TextEditingController();
+  final _complaintAmountController = TextEditingController();
+  final _complaintCountController = TextEditingController(text: '1');
   final FocusNode _complaintFocusNode = FocusNode();
   String? _selectedGlobalTyreBrand;
   String? _selectedGlobalTyreModel;
@@ -271,6 +273,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _newClientMobileController.dispose();
     _odometerController.dispose();
     _complaintInputController.dispose();
+    _complaintAmountController.dispose();
+    _complaintCountController.dispose();
     _ownerGstController.dispose();
     _audioRecorder.dispose();
     _audioPlayer.dispose();
@@ -305,6 +309,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _newClientMobileController.clear();
       _odometerController.clear();
       _complaintInputController.clear();
+      _complaintAmountController.clear();
+      _complaintCountController.text = '1';
       _selectedGlobalTyreBrand = null;
       _selectedGlobalTyreModel = null;
       _selectedBrand = null;
@@ -513,7 +519,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _saveJobCard() async {
+  Future<void> _saveJobCard({bool isDraft = false}) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     if (_complaints.isEmpty) {
       _showErrorSnackBar('Please add at least one complaint.');
@@ -611,7 +617,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
         );
       }
 
-      await _executeSaveJobCard();
+      await _executeSaveJobCard(isDraft: isDraft);
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop();
@@ -621,19 +627,21 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _executeSaveJobCard() async {
+  Future<void> _executeSaveJobCard({bool isDraft = false}) async {
     final user = Provider.of<UserProvider>(context, listen: false).user;
     if (user == null) {
       _showErrorSnackBar('You are not logged in.');
       return;
     }
 
-    // ✅ Modify Odometer validation and saving logic (2e)
-    // Validate required wheel photos
-    if (_wheelPhotos.length < 5) {
-      final missingWheels = _requiredWheels.where((w) => !_wheelPhotos.containsKey(w)).join(', ');
-      _showErrorSnackBar('Missing required wheel photos: $missingWheels');
-      return;
+    if (!isDraft) {
+      // ✅ Modify Odometer validation and saving logic (2e)
+      // Validate required wheel photos
+      if (_wheelPhotos.length < 5) {
+        final missingWheels = _requiredWheels.where((w) => !_wheelPhotos.containsKey(w)).join(', ');
+        _showErrorSnackBar('Missing required wheel photos: $missingWheels');
+        return;
+      }
     }
 
     // Validate odometer format, but NOT the value against _lastKnownOdometer here
@@ -709,7 +717,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'executive_id': executiveId, // Passes int?
         'complaint': jsonEncode(_complaints),
         if (barcodeJson.isNotEmpty) 'barcode': barcodeJson,
-        'status': AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
+        'status': isDraft ? AppConstants.statusDraft : AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
         'started_at': DateTime.now().toIso8601String(), // Start the timer immediately upon creation
         'marks': jsonEncode(marksJson),
         'odometer_reading': newOdometer, // Save the entered value
@@ -810,7 +818,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
         }).eq('id', widget.bookingId!);
       }
 
-      _showSuccessSnackBar('Job card created successfully!${(_wheelPhotos.isNotEmpty || _audioPath != null) ? ' Media saved locally for this job.' : ''}');
+      _showSuccessSnackBar(isDraft ? 'Draft saved successfully!' : 'Job card created successfully!${(_wheelPhotos.isNotEmpty || _audioPath != null) ? ' Media saved locally for this job.' : ''}');
 
       if (mounted) {
         // ✅ FIX: Pass the integer user ID to refresh
@@ -967,6 +975,30 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'type': AppConstants.typeComplaint
       });
       _complaintInputController.clear();
+    });
+  }
+
+  void _addTyreComplaint() {
+    if (_selectedGlobalTyreBrand == null || _selectedGlobalTyreModel == null) {
+      _showErrorSnackBar('Please select Tyre Brand and Model first.');
+      return;
+    }
+    final complaintText = 'Tyre - $_selectedGlobalTyreBrand $_selectedGlobalTyreModel';
+
+    double unitPrice = double.tryParse(_complaintAmountController.text) ?? 0.0;
+    int count = int.tryParse(_complaintCountController.text) ?? 1;
+    double totalPrice = unitPrice * count;
+
+    setState(() {
+      _complaints.add({
+        'text': complaintText,
+        'amount': totalPrice,
+        'unit_price': unitPrice,
+        'count': count,
+        'type': AppConstants.typeComplaint
+      });
+      _complaintAmountController.clear();
+      _complaintCountController.text = '1';
     });
   }
 
@@ -1997,6 +2029,24 @@ class _JobCardScreenState extends State<JobCardScreen> {
                         child: Row(
                           children: [
                             Expanded(child: Text(_complaints[index]['text'])),
+                            if (_complaints[index]['count'] != null && _complaints[index]['count'] > 1)
+                              Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  border: Border.all(color: Colors.grey.shade300),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  'Qty: ${_complaints[index]['count']}',
+                                  style: TextStyle(
+                                    color: Colors.grey.shade700,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
                             if (_complaints[index]['amount'] != null && _complaints[index]['amount'] > 0)
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2159,6 +2209,43 @@ class _JobCardScreenState extends State<JobCardScreen> {
                           });
                         },
                 ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _complaintAmountController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                    hintText: 'e.g. 100',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _complaintCountController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Count',
+                    hintText: 'e.g. 4',
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: _addTyreComplaint,
+                style: ElevatedButton.styleFrom(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                child: const Text('Add Tyre'),
               ),
             ],
           ),
@@ -2367,14 +2454,30 @@ class _JobCardScreenState extends State<JobCardScreen> {
           ),
           const SizedBox(height: 32),
 
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _isLoading ? null : _saveJobCard,
-              icon: const Icon(Icons.add_task),
-              label: const Text('Create Job Card'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: true),
+                    icon: const Icon(Icons.drafts_outlined),
+                    label: const Text('Save as Draft'),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
+                    icon: const Icon(Icons.add_task),
+                    label: const Text('Create Job Card'),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

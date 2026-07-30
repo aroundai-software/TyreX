@@ -273,7 +273,7 @@ class _CloseScreenState extends State<CloseScreen> {
       );
     }
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
       itemCount: completeJobs.length,
       itemBuilder: (context, index) {
         final job = completeJobs[index];

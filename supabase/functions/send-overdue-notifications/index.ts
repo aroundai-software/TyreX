@@ -1,5 +1,5 @@
 // supabase/functions/send-overdue-notifications/index.ts
-// Cron-scheduled Edge Function: fires every 15 mins to check for overdue jobs
+// Cron-scheduled Edge Function: fires every 5 mins to check for overdue jobs
 // and send FCM push notifications to the executive + all admins.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'

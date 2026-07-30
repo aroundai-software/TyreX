@@ -66,8 +66,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _odometerController = TextEditingController();
   final _complaintInputController = TextEditingController();
   final FocusNode _complaintFocusNode = FocusNode();
-  final _globalTyreSpecController = TextEditingController();
-  final FocusNode _globalTyreSpecFocusNode = FocusNode();
+  String? _selectedGlobalTyreBrand;
+  String? _selectedGlobalTyreModel;
 
   // Owner Master Field
   final _ownerGstController = TextEditingController();
@@ -274,8 +274,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _ownerGstController.dispose();
     _audioRecorder.dispose();
     _audioPlayer.dispose();
-    _globalTyreSpecController.dispose();
-    _globalTyreSpecFocusNode.dispose();
     
     for (var controller in _tyreQRControllers.values) {
       controller.dispose();
@@ -307,7 +305,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _newClientMobileController.clear();
       _odometerController.clear();
       _complaintInputController.clear();
-      _globalTyreSpecController.clear();
+      _selectedGlobalTyreBrand = null;
+      _selectedGlobalTyreModel = null;
       _selectedBrand = null;
       _selectedModelId = null;
       _selectedModelName = null;
@@ -694,7 +693,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       Map<String, Map<String, String>> tyreDetails = {};
       for (String wheel in _requiredWheels) {
         final hasImage = _tyreQRImages[wheel] != null;
-        final spec = _globalTyreSpecController.text.trim();
+        final spec = (_selectedGlobalTyreBrand != null && _selectedGlobalTyreModel != null)
+            ? '$_selectedGlobalTyreBrand $_selectedGlobalTyreModel'
+            : '';
         if (hasImage || spec.isNotEmpty) {
           tyreDetails[wheel] = {};
           if (hasImage) tyreDetails[wheel]!['has_image'] = 'true';
@@ -1230,6 +1231,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     labelText: 'Tech Type',
                     isDense: true,
                   ),
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
                   value: assignment['role'],
                   isExpanded: true, // Fixes RenderFlex overflow
                   items: AppConstants.techRoles.map((role) {
@@ -1237,7 +1239,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     displayRole = displayRole[0].toUpperCase() + displayRole.substring(1);
                     return DropdownMenuItem<String>(
                       value: role,
-                      child: Text(displayRole, style: const TextStyle(fontSize: 14)),
+                      child: Text(displayRole, style: const TextStyle(fontSize: 13)),
                     );
                   }).toList(),
                   onChanged: (value) {
@@ -1257,11 +1259,12 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     labelText: 'Technician',
                     isDense: true,
                   ),
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
                   value: assignment['tech_id'],
                   items: availableTechs.map((tech) {
                     return DropdownMenuItem<int>(
                       value: tech['id'] as int,
-                      child: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 14)),
+                      child: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 13)),
                     );
                   }).toList(),
                   onChanged: (value) {
@@ -1446,7 +1449,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -2046,8 +2049,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
                       controller: controller,
                       focusNode: focusNode,
                       decoration: const InputDecoration(
-                        hintText: 'Select or type complaint...',
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        hintText: 'Add complaint...',
+                        hintStyle: TextStyle(fontSize: 13),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                         suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
                       ),
                       onSubmitted: (_) => _addComplaint(),
@@ -2096,60 +2100,67 @@ class _JobCardScreenState extends State<JobCardScreen> {
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre Specification (Applies to all)'),
           const SizedBox(height: 8),
-          RawAutocomplete<String>(
-            textEditingController: _globalTyreSpecController,
-            focusNode: _globalTyreSpecFocusNode,
-            optionsBuilder: (TextEditingValue textEditingValue) {
-              if (textEditingValue.text.isEmpty) {
-                return _tyreCatalog.map((t) => '${t['brand']} ${t['model']} ${t['size']}');
-              }
-              return _tyreCatalog
-                  .map((t) => '${t['brand']} ${t['model']} ${t['size']}')
-                  .where((spec) => spec.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-            },
-            onSelected: (String selection) {
-              _globalTyreSpecController.text = selection;
-            },
-            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-              return TextField(
-                controller: controller,
-                focusNode: focusNode,
-                decoration: const InputDecoration(
-                  hintText: 'Select or type global Tyre Specs',
-                  prefixIcon: Icon(Icons.description, size: 18),
-                  suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
-                  isDense: true,
-                ),
-                onSubmitted: (_) => onFieldSubmitted(),
-              );
-            },
-            optionsViewBuilder: (context, onSelected, options) {
-              return Align(
-                alignment: Alignment.topLeft,
-                child: Material(
-                  elevation: 4.0,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Container(
-                    constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
-                    child: ListView.builder(
-                      padding: EdgeInsets.zero,
-                      shrinkWrap: true,
-                      itemCount: options.length,
-                      itemBuilder: (context, index) {
-                        final String option = options.elementAt(index);
-                        return InkWell(
-                          onTap: () => onSelected(option),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Text(option),
-                          ),
-                        );
-                      },
-                    ),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Brand',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
                   ),
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                  value: _selectedGlobalTyreBrand,
+                  items: () {
+                    final brands = _tyreCatalog.map((t) => t['brand'].toString()).toSet().toList();
+                    brands.sort();
+                    return brands.map((brand) => DropdownMenuItem(
+                      value: brand,
+                      child: Text(brand, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                    )).toList();
+                  }(),
+                  onChanged: (val) {
+                    setState(() {
+                      _selectedGlobalTyreBrand = val;
+                      _selectedGlobalTyreModel = null;
+                    });
+                  },
                 ),
-              );
-            },
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(
+                    labelText: 'Model/Size',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                  ),
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                  value: _selectedGlobalTyreModel,
+                  isExpanded: true,
+                  items: _selectedGlobalTyreBrand == null
+                      ? []
+                      : () {
+                          final models = _tyreCatalog
+                              .where((t) => t['brand'] == _selectedGlobalTyreBrand)
+                              .map((t) => '${t['model']} ${t['size']}').toSet().toList();
+                          models.sort();
+                          return models.map((model) => DropdownMenuItem(
+                            value: model,
+                            child: Text(model, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                          )).toList();
+                        }(),
+                  onChanged: _selectedGlobalTyreBrand == null
+                      ? null
+                      : (val) {
+                          setState(() {
+                            _selectedGlobalTyreModel = val;
+                          });
+                        },
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre QR Photos'),

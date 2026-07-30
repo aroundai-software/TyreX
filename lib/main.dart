@@ -25,6 +25,7 @@ import './screens/accountant/accountant_dashboard_screen.dart';
 import './theme/app_theme.dart';
 import './utils/app_constants.dart';
 import './services/local_media_service.dart';
+import './services/notification_service.dart';
 
 // Firebase background message handler (must be top-level)
 @pragma('vm:entry-point')
@@ -42,6 +43,9 @@ void main() async {
   try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    
+    // Initialize notifications (requires Firebase to be initialized first)
+    await NotificationService().initialize();
   } catch (e) {
     debugPrint('Firebase initialization failed (probably missing web options): $e');
   }

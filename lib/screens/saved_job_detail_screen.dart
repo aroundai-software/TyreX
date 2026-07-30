@@ -214,7 +214,7 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
       children: [
         // Vehicle Header Card
         Container(

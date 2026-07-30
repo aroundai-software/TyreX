@@ -229,7 +229,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
               return SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: EdgeInsets.all(isDesktop ? 24 : 16),
+                padding: EdgeInsets.symmetric(
+                  horizontal: isDesktop ? 24.0 : 4.0,
+                  vertical: isDesktop ? 24.0 : 16.0,
+                ),
                 child: Container(
                   decoration: isDesktop ? null : BoxDecoration(
                     color: Colors.white,
@@ -242,7 +245,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                     ],
                   ),
-                  padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.all(16),
+                  padding: isDesktop ? EdgeInsets.zero : const EdgeInsets.symmetric(vertical: 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [

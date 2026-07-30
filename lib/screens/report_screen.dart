@@ -761,13 +761,13 @@ class _ReportScreenState extends State<ReportScreen> {
                   child: CustomScrollView(
                     slivers: [
                       SliverPadding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
                         sliver: SliverToBoxAdapter(
                           child: _buildFilterCard(), // Filters remain at the top
                         ),
                       ),
                       SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 4.0).copyWith(bottom: 16),
                         sliver: SliverFillRemaining(
                           hasScrollBody: true,
                           child: _buildServiceHistoryCard(

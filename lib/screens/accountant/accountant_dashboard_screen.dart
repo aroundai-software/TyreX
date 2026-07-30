@@ -376,7 +376,7 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     return RefreshIndicator(
       onRefresh: _loadData,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
         itemCount: _pendingBills.length,
         itemBuilder: (context, i) => _buildJobCard(_pendingBills[i], isPending: true),
       ),
@@ -399,7 +399,7 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     return RefreshIndicator(
       onRefresh: _loadData,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
         itemCount: _billed.length,
         itemBuilder: (context, i) => _buildJobCard(_billed[i], isPending: false),
       ),
@@ -422,7 +422,7 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     return RefreshIndicator(
       onRefresh: _loadData,
       child: ListView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
         itemCount: _paid.length,
         itemBuilder: (context, i) => _buildJobCard(_paid[i], isPending: false),
       ),

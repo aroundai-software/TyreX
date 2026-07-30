@@ -212,7 +212,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         centerTitle: true,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
         child: Column(
           children: [
             // Filters Card

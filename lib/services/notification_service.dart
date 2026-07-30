@@ -2,6 +2,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Top-level function for background message handling
 @pragma('vm:entry-point')
@@ -37,12 +38,20 @@ class NotificationService {
     }
 
     // Listen to token refresh
-    _fcm.onTokenRefresh.listen((token) {
+    _fcm.onTokenRefresh.listen((token) async {
       _fcmToken = token;
       if (kDebugMode) {
         print('FCM Token refreshed: $token');
       }
-      // TODO: Send token to your backend
+      
+      try {
+        final userId = Supabase.instance.client.auth.currentUser?.id;
+        if (userId != null) {
+          await Supabase.instance.client.from('users').update({'fcm_token': token}).eq('id', userId);
+        }
+      } catch (e) {
+        if (kDebugMode) print('Failed to update token on backend: $e');
+      }
     });
 
     // Configure message handlers

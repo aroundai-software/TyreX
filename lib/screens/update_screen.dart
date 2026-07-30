@@ -1683,6 +1683,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           
           bool isOverdue = false;
           int overdueBy = 0;
+          String overdueText = '';
           if (job['status'] == AppConstants.statusWorkInProgress && job['started_at'] != null) {
             final startTime = DateTime.tryParse(job['started_at']);
             if (startTime != null) {
@@ -1690,21 +1691,20 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               final int threshold = adminSettings.overdueMinutesThreshold;
               final minutesRunning = DateTime.now().difference(startTime).inMinutes;
               
-              if (minutesRunning >= threshold) {
+              if (minutesRunning > threshold) {
                 isOverdue = true;
-                overdueBy = minutesRunning;
+                overdueBy = minutesRunning - threshold;
+                
+                if (overdueBy >= 60) {
+                  final hrs = overdueBy ~/ 60;
+                  final mins = overdueBy % 60;
+                  overdueText = mins > 0 ? '$hrs hr $mins min' : '$hrs hr${hrs == 1 ? '' : 's'}';
+                } else {
+                  overdueText = '$overdueBy min';
+                }
+                
                 final int jobId = job['id'];
                 
-                // Trigger notification if not already notified
-                if (!_notifiedOverdueJobs.contains(jobId)) {
-                  _notifiedOverdueJobs.add(jobId);
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    NotificationService().showLocalNotification(
-                      title: 'Job Overdue Alert',
-                      body: 'Job #${job['job_card_id'] ?? jobId} for $vehicleNo has been in progress for $minutesRunning minutes.',
-                    );
-                  });
-                }
               }
             }
           }
@@ -1747,7 +1747,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '⚠️ Overdue by $overdueBy hour${overdueBy == 1 ? '' : 's'}',
+                                '⚠️ Overdue by $overdueText',
                                 style: const TextStyle(
                                   color: Color(0xFFB91C1C),
                                   fontSize: 13,

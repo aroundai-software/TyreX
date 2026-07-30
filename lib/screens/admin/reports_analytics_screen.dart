@@ -401,7 +401,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
       body: RefreshIndicator(
         onRefresh: _loadReports,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
           children: [
             _buildSummaryCards(),
             const SizedBox(height: 16),

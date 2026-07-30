@@ -68,7 +68,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
         foregroundColor: AppTheme.textPrimary,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

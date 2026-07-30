@@ -717,8 +717,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'executive_id': executiveId, // Passes int?
         'complaint': jsonEncode(_complaints),
         if (barcodeJson.isNotEmpty) 'barcode': barcodeJson,
-        'status': isDraft ? AppConstants.statusDraft : AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
-        'started_at': DateTime.now().toIso8601String(), // Start the timer immediately upon creation
+        'status': isDraft ? AppConstants.statusDraft : AppConstants.statusWorkInProgress, 
+        'started_at': isDraft ? null : DateTime.now().toIso8601String(), // Start the timer immediately upon creation only if not draft
         'marks': jsonEncode(marksJson),
         'odometer_reading': newOdometer, // Save the entered value
         'Owner name': _newClientNameController.text.trim(),

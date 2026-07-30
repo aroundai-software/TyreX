@@ -704,7 +704,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       updateData['status'] = AppConstants.statusCompleted;
       updateData['completed_at'] = DateTime.now().toIso8601String();
     } else if (_openedFromTab == 'Drafts' && convertToJobCard) {
-      updateData['status'] = AppConstants.statusNotStarted;
+      updateData['status'] = AppConstants.statusWorkInProgress;
       updateData['started_at'] = DateTime.now().toIso8601String();
     } else {
       // It's from 'Jobs' tab (Pending), so it should just save as 'Work in Progress' if they updated something
@@ -1509,11 +1509,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             .toList();
 
         final pendingJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress)
+            .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
             .toList();
-            final pendingJobs = allReports
-        .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
-        .toList();
             
         final workInProgressJobs = allReports
             .where((r) => r['status'] == AppConstants.statusWorkInProgress)
@@ -1917,7 +1914,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   );
                                 }).toList(),
                               ],
-                              if (job['started_at'] != null && job['status'] != AppConstants.statusDraft) ...[
                               if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                 const SizedBox(height: 6),
                                 Row(
@@ -2118,7 +2114,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                         color: Color(0xFF9CA3AF),
                                       ),
                                     ),
-                                  if (job['started_at'] != null && job['status'] != AppConstants.statusDraft) ...[
                                   if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
                                     const SizedBox(height: 6),
                                     Row(

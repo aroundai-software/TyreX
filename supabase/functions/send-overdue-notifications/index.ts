@@ -108,7 +108,7 @@ async function sendFcm(
 
 // ─── Main handler ────────────────────────────────────────────────────────────
 
-Deno.serve(async (_req) => {
+Deno.cron("check-overdue-jobs", "*/1 * * * *", async () => {
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -140,7 +140,8 @@ Deno.serve(async (_req) => {
     if (jobErr) throw jobErr
 
     if (!jobs || jobs.length === 0) {
-      return new Response(JSON.stringify({ message: 'No overdue jobs' }), { status: 200 })
+      console.log('No overdue jobs')
+      return
     }
 
     // 3. Filter: only jobs that haven't had a reminder yet, or it's been 30+ min
@@ -150,7 +151,8 @@ Deno.serve(async (_req) => {
     })
 
     if (toNotify.length === 0) {
-      return new Response(JSON.stringify({ message: 'All jobs already notified recently' }), { status: 200 })
+      console.log('All jobs already notified recently')
+      return
     }
 
     // 4. Get all admin FCM tokens
@@ -197,18 +199,9 @@ Deno.serve(async (_req) => {
         .eq('id', job.id)
     }
 
-    return new Response(
-      JSON.stringify({
-        message: `Sent ${sent} notifications for ${toNotify.length} overdue jobs`,
-        interval_minutes: intervalMin,
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    )
+    console.log(`Sent ${sent} notifications for ${toNotify.length} overdue jobs`)
+    return
   } catch (err) {
     console.error('Edge function error:', err)
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
   }
 })

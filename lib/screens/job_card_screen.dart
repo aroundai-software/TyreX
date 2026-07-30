@@ -632,7 +632,27 @@ class _JobCardScreenState extends State<JobCardScreen> {
     // Validate required wheel photos
     if (_wheelPhotos.length < 5) {
       final missingWheels = _requiredWheels.where((w) => !_wheelPhotos.containsKey(w)).join(', ');
-      _showErrorSnackBar('Missing required wheel photos: $missingWheels');
+      final takePhotos = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Missing Photos'),
+          content: Text('Missing required wheel photos: $missingWheels.\nWould you like to take them now?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Take Photos'),
+            ),
+          ],
+        ),
+      );
+
+      if (takePhotos == true) {
+        await _startRapidCapture();
+      }
       return;
     }
 
@@ -741,43 +761,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
       final int jobId = inserted['id'] as int;
       final String? jobCardId = inserted['job_card_id'] as String?;
 
-      // Upload media to Supabase Storage
-      List<String> uploadedUrls = [];
-      
-      for (final entry in _wheelPhotos.entries) {
-        final position = entry.key;
-        final photoXFile = entry.value;
-        final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final bytes = await photoXFile.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, fileName);
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      if (_vehiclePhoto != null) {
-        final bytes = await _vehiclePhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      for (final entry in _tyreQRImages.entries) {
-        final position = entry.key;
-        final imageBytes = entry.value;
-        final url = await SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-
-      if (_odometerPhoto != null) {
-        final bytes = await _odometerPhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      // Update the reports table with the photo_urls
-      if (uploadedUrls.isNotEmpty) {
-        await supabase.from('reports').update({
-          'photo_urls': uploadedUrls // Supabase handles list to JSON automatically
-        }).eq('id', jobId);
-      }
+      // Upload media to Supabase Storage asynchronously
+      _uploadMediaInBackground(
+        jobId: jobId,
+        wheelPhotos: Map.from(_wheelPhotos),
+        vehiclePhoto: _vehiclePhoto,
+        tyreQRImages: Map.from(_tyreQRImages),
+        odometerPhoto: _odometerPhoto,
+      );
 
       // Audio
       if (_audioPath != null) {
@@ -837,6 +828,48 @@ class _JobCardScreenState extends State<JobCardScreen> {
         Navigator.of(context).pop(); // Close the progress dialog
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _uploadMediaInBackground({
+    required int jobId,
+    required Map<String, XFile> wheelPhotos,
+    required XFile? vehiclePhoto,
+    required Map<String, Uint8List> tyreQRImages,
+    required XFile? odometerPhoto,
+  }) async {
+    List<String> uploadedUrls = [];
+    List<Future<String?>> uploadTasks = [];
+
+    for (final entry in wheelPhotos.entries) {
+      final position = entry.key;
+      final photoXFile = entry.value;
+      final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
+    }
+    
+    if (vehiclePhoto != null) {
+      uploadTasks.add(vehiclePhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    }
+    
+    for (final entry in tyreQRImages.entries) {
+      final position = entry.key;
+      final imageBytes = entry.value;
+      uploadTasks.add(SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg'));
+    }
+
+    if (odometerPhoto != null) {
+      uploadTasks.add(odometerPhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    }
+    
+    final results = await Future.wait(uploadTasks);
+    uploadedUrls = results.where((url) => url != null).cast<String>().toList();
+
+    // Update the reports table with the photo_urls
+    if (uploadedUrls.isNotEmpty) {
+      await supabase.from('reports').update({
+        'photo_urls': uploadedUrls
+      }).eq('id', jobId);
     }
   }
 

@@ -99,6 +99,26 @@ class NotificationService {
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
+
+    final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin != null) {
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'autofix_channel',
+          'AutoFix Notifications',
+          description: 'Notifications for job updates and alerts',
+          importance: Importance.high,
+        ),
+      );
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'overdue_reminders',
+          'Overdue Reminders',
+          description: 'Notifications for overdue jobs',
+          importance: Importance.high,
+        ),
+      );
+    }
   }
 
   void _handleForegroundMessage(RemoteMessage message) {

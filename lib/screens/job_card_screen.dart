@@ -21,6 +21,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:archive/archive.dart';
 import '../utils/app_constants.dart';
 import '../utils/validators.dart';
+import '../widgets/service_catalog_picker.dart';
 import '../utils/vehicle_number_utils.dart';
 import '../widgets/error_display.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -67,6 +68,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _complaintInputController = TextEditingController();
   final _complaintAmountController = TextEditingController();
   final _complaintCountController = TextEditingController(text: '1');
+  final _laborCostController = TextEditingController(); // Added Labour Cost Controller
   final FocusNode _complaintFocusNode = FocusNode();
   String? _selectedGlobalTyreBrand;
   String? _selectedGlobalTyreModel;
@@ -100,7 +102,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/$wheel-qr.png');
     await file.writeAsBytes(bytes);
-    await Share.shareXFiles([XFile(file.path)], text: 'Tyre QR for $wheel');
+    await Share.shareFiles([file.path], text: 'Tyre QR for $wheel');
   }
 
   Future<void> _shareAllTyresAsZip() async {
@@ -116,7 +118,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     final dir = await getTemporaryDirectory();
     final zipFile = File('${dir.path}/tyre_qrs_and_pdfs.zip');
     await zipFile.writeAsBytes(zipData);
-    await Share.shareXFiles([XFile(zipFile.path)], text: 'All tyre QR images and PDFs');
+    await Share.shareFiles([zipFile.path], text: 'All tyre QR images and PDFs');
   }
 
   // Share a PDF containing the tyre QR image and specs
@@ -142,7 +144,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     final dir = await getTemporaryDirectory();
     final pdfFile = File('${dir.path}/$wheel-qr.pdf');
     await pdfFile.writeAsBytes(await pdf.save());
-    await Share.shareXFiles([XFile(pdfFile.path)], text: 'Tyre PDF for $wheel');
+    await Share.shareFiles([pdfFile.path], text: 'Tyre PDF for $wheel');
   }
 
   // State variables for owner details
@@ -275,6 +277,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _complaintInputController.dispose();
     _complaintAmountController.dispose();
     _complaintCountController.dispose();
+    _laborCostController.dispose();
     _ownerGstController.dispose();
     _audioRecorder.dispose();
     _audioPlayer.dispose();
@@ -311,6 +314,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _complaintInputController.clear();
       _complaintAmountController.clear();
       _complaintCountController.text = '1';
+      _laborCostController.clear();
       _selectedGlobalTyreBrand = null;
       _selectedGlobalTyreModel = null;
       _selectedBrand = null;
@@ -544,15 +548,15 @@ class _JobCardScreenState extends State<JobCardScreen> {
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
-        return const AlertDialog(
+        return AlertDialog(
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Creating job card...', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              SizedBox(height: 16),
-              LinearProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Checking duplicates & saving details...'),
+              Text(isDraft ? 'Saving as draft...' : 'Creating job card...', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 16),
+              const LinearProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text('Checking duplicates & saving details...'),
             ],
           ),
         );
@@ -601,15 +605,15 @@ class _JobCardScreenState extends State<JobCardScreen> {
           context: context,
           barrierDismissible: false,
           builder: (BuildContext context) {
-            return const AlertDialog(
+            return AlertDialog(
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('Creating job card...', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  SizedBox(height: 16),
-                  LinearProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Uploading images and saving details...'),
+                  Text(isDraft ? 'Saving as draft...' : 'Creating job card...', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 16),
+                  const LinearProgressIndicator(),
+                  const SizedBox(height: 16),
+                  const Text('Uploading images and saving details...'),
                 ],
               ),
             );
@@ -630,6 +634,10 @@ class _JobCardScreenState extends State<JobCardScreen> {
   Future<void> _executeSaveJobCard({bool isDraft = false}) async {
     final user = Provider.of<UserProvider>(context, listen: false).user;
     if (user == null) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        setState(() => _isLoading = false);
+      }
       _showErrorSnackBar('You are not logged in.');
       return;
     }
@@ -638,16 +646,47 @@ class _JobCardScreenState extends State<JobCardScreen> {
       // ✅ Modify Odometer validation and saving logic (2e)
       // Validate required wheel photos
       if (_wheelPhotos.length < 5) {
+        if (mounted) {
+          Navigator.of(context).pop();
+          setState(() => _isLoading = false);
+        }
+
         final missingWheels = _requiredWheels.where((w) => !_wheelPhotos.containsKey(w)).join(', ');
-        _showErrorSnackBar('Missing required wheel photos: $missingWheels');
+        final takePhotos = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Missing Photos'),
+            content: Text('Missing required wheel photos: $missingWheels.\nWould you like to take them now?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Take Photos'),
+              ),
+            ],
+          ),
+        );
+
+        if (takePhotos == true) {
+          await _startRapidCapture();
+          if (_wheelPhotos.length >= 5) {
+            _showSuccessSnackBar('Photos added! Please click Create Job Card again.');
+          }
+        }
         return;
       }
     }
 
-    // Validate odometer format, but NOT the value against _lastKnownOdometer here
     final odometerFormatError = Validators.validateOdometer(
         _odometerController.text); // Only checks format
     if (odometerFormatError != null) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        setState(() => _isLoading = false);
+      }
       _showErrorSnackBar(odometerFormatError);
       return;
     }
@@ -704,9 +743,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
         final spec = (_selectedGlobalTyreBrand != null && _selectedGlobalTyreModel != null)
             ? '$_selectedGlobalTyreBrand $_selectedGlobalTyreModel'
             : '';
-        if (hasImage || spec.isNotEmpty) {
+        if (hasImage) { // Only add if it actually has an image
           tyreDetails[wheel] = {};
-          if (hasImage) tyreDetails[wheel]!['has_image'] = 'true';
+          tyreDetails[wheel]!['has_image'] = 'true';
           if (spec.isNotEmpty) tyreDetails[wheel]!['spec'] = spec;
         }
       }
@@ -721,6 +760,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'started_at': isDraft ? null : DateTime.now().toIso8601String(), // Start the timer immediately upon creation only if not draft
         'marks': jsonEncode(marksJson),
         'odometer_reading': newOdometer, // Save the entered value
+        'labour_cost': double.tryParse(_laborCostController.text) ?? 0.0,
         'Owner name': _newClientNameController.text.trim(),
         'client_phone': _newClientPhoneController.text.trim(),
         'technician_assignments': _technicianAssignments.isNotEmpty ? jsonEncode(_technicianAssignments) : null,
@@ -749,43 +789,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
       final int jobId = inserted['id'] as int;
       final String? jobCardId = inserted['job_card_id'] as String?;
 
-      // Upload media to Supabase Storage
-      List<String> uploadedUrls = [];
-      
-      for (final entry in _wheelPhotos.entries) {
-        final position = entry.key;
-        final photoXFile = entry.value;
-        final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final bytes = await photoXFile.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, fileName);
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      if (_vehiclePhoto != null) {
-        final bytes = await _vehiclePhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      for (final entry in _tyreQRImages.entries) {
-        final position = entry.key;
-        final imageBytes = entry.value;
-        final url = await SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-
-      if (_odometerPhoto != null) {
-        final bytes = await _odometerPhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
-      }
-      
-      // Update the reports table with the photo_urls
-      if (uploadedUrls.isNotEmpty) {
-        await supabase.from('reports').update({
-          'photo_urls': uploadedUrls // Supabase handles list to JSON automatically
-        }).eq('id', jobId);
-      }
+      // Upload media to Supabase Storage asynchronously
+      _uploadMediaInBackground(
+        jobId: jobId,
+        wheelPhotos: Map.from(_wheelPhotos),
+        vehiclePhoto: _vehiclePhoto,
+        tyreQRImages: Map.from(_tyreQRImages),
+        odometerPhoto: _odometerPhoto,
+      );
 
       // Audio
       if (_audioPath != null) {
@@ -845,6 +856,48 @@ class _JobCardScreenState extends State<JobCardScreen> {
         Navigator.of(context).pop(); // Close the progress dialog
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _uploadMediaInBackground({
+    required int jobId,
+    required Map<String, XFile> wheelPhotos,
+    required XFile? vehiclePhoto,
+    required Map<String, Uint8List> tyreQRImages,
+    required XFile? odometerPhoto,
+  }) async {
+    List<String> uploadedUrls = [];
+    List<Future<String?>> uploadTasks = [];
+
+    for (final entry in wheelPhotos.entries) {
+      final position = entry.key;
+      final photoXFile = entry.value;
+      final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
+    }
+    
+    if (vehiclePhoto != null) {
+      uploadTasks.add(vehiclePhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    }
+    
+    for (final entry in tyreQRImages.entries) {
+      final position = entry.key;
+      final imageBytes = entry.value;
+      uploadTasks.add(SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg'));
+    }
+
+    if (odometerPhoto != null) {
+      uploadTasks.add(odometerPhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    }
+    
+    final results = await Future.wait(uploadTasks);
+    uploadedUrls = results.where((url) => url != null).cast<String>().toList();
+
+    // Update the reports table with the photo_urls
+    if (uploadedUrls.isNotEmpty) {
+      await supabase.from('reports').update({
+        'photo_urls': uploadedUrls
+      }).eq('id', jobId);
     }
   }
 
@@ -935,8 +988,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
       // Share PDF
       final String message = 'Warranty details for Job Card $jobIdStr (Vehicle: $vehicleNo)';
-      await Share.shareXFiles(
-        [XFile(file.path)],
+      await Share.shareFiles(
+        [file.path],
         text: message,
         subject: 'Warranty details for Job Card $jobIdStr',
       );
@@ -946,6 +999,21 @@ class _JobCardScreenState extends State<JobCardScreen> {
   }
 
   // --- UI & MEDIA HELPERS ---
+
+  void _showServiceCatalogModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ServiceCatalogPicker(
+        serviceCatalog: _serviceCatalog,
+        onServiceSelected: (String serviceName, double? defaultPrice) {
+          _complaintInputController.text = serviceName;
+          _addComplaint();
+        },
+      ),
+    );
+  }
 
   void _addComplaint() {
     final complaintText = _complaintInputController.text.trim();
@@ -1004,6 +1072,47 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   void _deleteComplaint(int index) {
     setState(() => _complaints.removeAt(index));
+  }
+
+  void _editComplaintAmount(int index) {
+    final TextEditingController editAmountController = TextEditingController(
+      text: (_complaints[index]['amount'] ?? '').toString()
+    );
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Amount'),
+        content: TextField(
+          controller: editAmountController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Amount (₹)',
+            border: OutlineInputBorder(),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                final double? parsed = double.tryParse(editAmountController.text);
+                _complaints[index]['amount'] = parsed ?? 0.0;
+                // Update unit_price if count exists
+                if (_complaints[index]['count'] != null && _complaints[index]['count'] > 0) {
+                  _complaints[index]['unit_price'] = (parsed ?? 0.0) / _complaints[index]['count'];
+                }
+              });
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -2047,22 +2156,34 @@ class _JobCardScreenState extends State<JobCardScreen> {
                                   ),
                                 ),
                               ),
-                            if (_complaints[index]['amount'] != null && _complaints[index]['amount'] > 0)
-                              Container(
+                            InkWell(
+                              onTap: () => _editComplaintAmount(index),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
                                   color: AppTheme.primaryColor.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Text(
-                                  '₹${_complaints[index]['amount']}',
-                                  style: const TextStyle(
-                                    color: AppTheme.primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _complaints[index]['amount'] != null && _complaints[index]['amount'] > 0
+                                          ? '₹${_complaints[index]['amount']}'
+                                          : 'Add ₹',
+                                      style: const TextStyle(
+                                        color: AppTheme.primaryColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.edit, size: 12, color: AppTheme.primaryColor),
+                                  ],
                                 ),
                               ),
+                            ),
                           ],
                         ),
                       ),
@@ -2080,60 +2201,18 @@ class _JobCardScreenState extends State<JobCardScreen> {
           Row(
             children: [
               Expanded(
-                child: RawAutocomplete<String>(
-                  textEditingController: _complaintInputController,
+                child: TextField(
+                  controller: _complaintInputController,
                   focusNode: _complaintFocusNode,
-                  optionsBuilder: (TextEditingValue textEditingValue) {
-                    if (textEditingValue.text.isEmpty) {
-                      return _serviceCatalog.map((s) => s['name'].toString());
-                    }
-                    return _serviceCatalog
-                        .map((s) => s['name'].toString())
-                        .where((name) => name.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                  },
-                  onSelected: (String selection) {
-                    _complaintInputController.text = selection;
-                  },
-                  fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: const InputDecoration(
-                        hintText: 'Add complaint...',
-                        hintStyle: TextStyle(fontSize: 13),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                        suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
-                      ),
-                      onSubmitted: (_) => _addComplaint(),
-                    );
-                  },
-                  optionsViewBuilder: (context, onSelected, options) {
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 4.0,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
-                          child: ListView.builder(
-                            padding: EdgeInsets.zero,
-                            shrinkWrap: true,
-                            itemCount: options.length,
-                            itemBuilder: (context, index) {
-                              final String option = options.elementAt(index);
-                              return InkWell(
-                                onTap: () => onSelected(option),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Text(option),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
+                  readOnly: true,
+                  onTap: _showServiceCatalogModal,
+                  decoration: const InputDecoration(
+                    hintText: 'Select or add service...',
+                    hintStyle: TextStyle(fontSize: 13),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    suffixIcon: Icon(Icons.list_alt, color: AppTheme.primaryColor),
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -2450,6 +2529,18 @@ class _JobCardScreenState extends State<JobCardScreen> {
               },
               icon: const Icon(Icons.add),
               label: const Text('Add Technician'),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const FormLabel(text: 'Labour Charges'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _laborCostController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Enter amount',
+              prefixText: '₹ ',
+              border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 32),

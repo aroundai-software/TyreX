@@ -1587,15 +1587,11 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             .toList();
             
         final workInProgressJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusWorkInProgress && matchesSearch(r))
+            .where((r) => r['status'] == AppConstants.statusWorkInProgress)
             .toList();
             
         final completedJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusCompleted && matchesSearch(r))
-            .toList();
-            
-        final cancelledJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusCancelled && matchesSearch(r))
+            .where((r) => r['status'] == AppConstants.statusCompleted)
             .toList();
             
         final cancelledJobs = allReports

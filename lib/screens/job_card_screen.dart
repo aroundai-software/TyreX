@@ -305,6 +305,12 @@ class _JobCardScreenState extends State<JobCardScreen> {
     super.dispose();
   }
 
+  void _syncTyreComplaint() {
+    int count = int.tryParse(_tyreCountController.text) ?? 0;
+    double price = double.tryParse(_tyrePriceController.text) ?? 0.0;
+    _tyreTotalController.text = (count * price).toStringAsFixed(2);
+  }
+
   // --- GOOGLE DRIVE REMOVED ---
 
   // --- DATA FETCHING & LOGIC ---
@@ -799,7 +805,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _uploadMediaInBackground(
         jobId: jobId,
         wheelPhotos: Map.from(_wheelPhotos),
-        vehiclePhoto: _vehiclePhoto,
+        vehiclePhoto: _vehiclePhotos.isNotEmpty ? _vehiclePhotos.first : null,
         tyreQRImages: Map.from(_tyreQRImages),
         odometerPhoto: _odometerPhoto,
       );
@@ -2187,19 +2193,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _labourChargeController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Labour Charge (₹)',
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.handyman, size: 18),
-            ),
-            onChanged: (val) => _syncLabourCharge(),
-          ),
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre Specification (Applies to all)'),
           const SizedBox(height: 8),
@@ -2699,38 +2692,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
                     icon: const Icon(Icons.add_task),
                     label: const Text('Create Job Card'),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-  Widget _buildPhotoSlot(String title, XFile? file, VoidCallback onCapture, VoidCallback onRemove) {
-    return GestureDetector(
-      onTap: file == null ? onCapture : null,
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: file != null ? Colors.green : Colors.grey.shade300),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SizedBox(
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
-                    icon: const Icon(Icons.add_task, size: 20),
-                    label: const FittedBox(fit: BoxFit.scaleDown, child: Text('Create Job Card')),
                   ),
                 ),
               ),

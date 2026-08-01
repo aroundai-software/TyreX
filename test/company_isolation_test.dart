@@ -58,7 +58,7 @@ void main() {
     test('user provider company functionality has been removed', () {
       // Company selection has been removed from the app
       // These properties and methods no longer exist
-      expect(() => userProvider.setSelectedCompany({'id': 1, 'company_name': 'Test Company'}), 
+      expect(() => (userProvider as dynamic).setSelectedCompany({'id': 1, 'company_name': 'Test Company'}), 
              throwsA(isA<NoSuchMethodError>()));
     });
   });

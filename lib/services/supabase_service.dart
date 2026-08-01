@@ -254,7 +254,7 @@ class SupabaseService {
             client_phone, odometer_reading, "Owner name",
             customer_feedback_text, customer_feedback_audio,
             marks, gdrive_folder_url, booking_id, created_by_pudo_id,
-            inspection_remarks, barcode,
+            inspection_remarks, barcode, photo_urls, after_photo_urls,
             vehicles!reports_vehicle_fk(
               "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
               vehicle_models!inner(brand, "Model name")
@@ -301,7 +301,7 @@ class SupabaseService {
             client_phone, odometer_reading, "Owner name",
             customer_feedback_text, customer_feedback_audio,
             marks, gdrive_folder_url, booking_id, created_by_pudo_id,
-            inspection_remarks,
+            inspection_remarks, barcode, photo_urls, after_photo_urls,
             vehicles!reports_vehicle_fk(
               "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
               vehicle_models!inner(brand, "Model name")
@@ -339,7 +339,7 @@ class SupabaseService {
           .from('reports')
           .select('''
           id, job_card_id, created_at, started_at, completed_at, status, complaint,
-          client_phone, odometer_reading, "Owner name", barcode,
+          client_phone, odometer_reading, "Owner name", barcode, photo_urls, after_photo_urls,
           vehicles!reports_vehicle_fk(
             "Guid", "Vehicle Number", vehicle_name,
             vehicle_models!inner(brand, "Model name")
@@ -1459,12 +1459,15 @@ class SupabaseService {
     }
   }
 
-  Future<void> addTyreCatalogItem(String brand, String model, String size) async {
+  Future<void> addTyreCatalogItem(String brand, String model, String size, {String? liSi, double? basicPrice, double? billingPrice}) async {
     try {
       final dataWithCompany = CompanyService().addCompanyFields({
         'brand': brand,
         'model': model,
         'size': size,
+        if (liSi != null) 'li_si': liSi,
+        if (basicPrice != null) 'basic_price': basicPrice,
+        if (billingPrice != null) 'billing_price': billingPrice,
       }, tableName: 'tyre_catalog');
       await _client.from('tyre_catalog').insert(dataWithCompany);
     } catch (e) {
@@ -1475,12 +1478,15 @@ class SupabaseService {
     }
   }
 
-  Future<void> updateTyreCatalogItem(int id, String brand, String model, String size) async {
+  Future<void> updateTyreCatalogItem(int id, String brand, String model, String size, {String? liSi, double? basicPrice, double? billingPrice}) async {
     try {
       await _client.from('tyre_catalog').update({
         'brand': brand,
         'model': model,
         'size': size,
+        'li_si': liSi,
+        'basic_price': basicPrice,
+        'billing_price': billingPrice,
       }).eq('id', id);
     } catch (e) {
       if (kDebugMode) {

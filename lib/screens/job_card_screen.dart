@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'update_screen.dart';
+import 'continuous_camera_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -37,6 +39,7 @@ import '../providers/user_provider.dart';
 import '../providers/report_provider.dart';
 import '../providers/admin_settings_provider.dart';
 import '../widgets/brand_model_search_dropdown.dart';
+import '../widgets/service_catalog_picker.dart';
 
 class JobCardScreen extends StatefulWidget {
   final int? bookingId;
@@ -55,6 +58,7 @@ class JobCardScreen extends StatefulWidget {
 }
 
 class _JobCardScreenState extends State<JobCardScreen> {
+  final ScrollController _mainScrollController = ScrollController();
   // Controllers
   final _vehicleNumberController = TextEditingController();
   final _newVehicleNameController = TextEditingController();
@@ -65,9 +69,15 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _newClientMobileController = TextEditingController();
   final _odometerController = TextEditingController();
   final _complaintInputController = TextEditingController();
+  final _labourChargeController = TextEditingController();
   final FocusNode _complaintFocusNode = FocusNode();
   String? _selectedGlobalTyreBrand;
   String? _selectedGlobalTyreModel;
+  String? _selectedGlobalTyreSize;
+  String? _selectedGlobalTyreLiSi;
+  final TextEditingController _tyreCountController = TextEditingController();
+  final TextEditingController _tyrePriceController = TextEditingController();
+  final TextEditingController _tyreTotalController = TextEditingController();
 
   // Owner Master Field
   final _ownerGstController = TextEditingController();
@@ -164,7 +174,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   
   // Media & Barcode
   final Map<String, XFile> _wheelPhotos = {};
-  XFile? _vehiclePhoto;
+  final List<XFile> _vehiclePhotos = [];
   XFile? _odometerPhoto;
   
   // Tyre Warranty Details
@@ -174,9 +184,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
   
   final List<String> _requiredWheels = [
     'Front Left',
-    'Front Right',
     'Rear Left',
     'Rear Right',
+    'Front Right',
     'Stepney'
   ];
   final GlobalKey _imageKey = GlobalKey();
@@ -261,6 +271,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   @override
   void dispose() {
+    _mainScrollController.dispose();
     _complaintFocusNode.dispose();
     _vehicleNumberController.dispose();
     _newVehicleNameController.dispose();
@@ -271,6 +282,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     _newClientMobileController.dispose();
     _odometerController.dispose();
     _complaintInputController.dispose();
+    _labourChargeController.dispose();
     _ownerGstController.dispose();
     _audioRecorder.dispose();
     _audioPlayer.dispose();
@@ -282,6 +294,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       controller.dispose();
     }
     
+    _tyreCountController.dispose();
+    _tyrePriceController.dispose();
+    _tyreTotalController.dispose();
     super.dispose();
   }
 
@@ -307,11 +322,13 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _complaintInputController.clear();
       _selectedGlobalTyreBrand = null;
       _selectedGlobalTyreModel = null;
+      _selectedGlobalTyreSize = null;
+      _selectedGlobalTyreLiSi = null;
       _selectedBrand = null;
       _selectedModelId = null;
       _selectedModelName = null;
       _wheelPhotos.clear();
-      _vehiclePhoto = null;
+      _vehiclePhotos.clear();
       for (String wheel in _requiredWheels) {
         _tyreQRControllers[wheel]?.clear();
         _tyreSpecControllers[wheel]?.clear();
@@ -490,10 +507,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       
       final ownerId = await vehicleService.createOrUpdateOwner(context, ownerData);
 
-      // Then save vehicle details with owner reference
       final vehicleData = {
         'Vehicle Number': VehicleNumberUtils.normalize(_vehicleNumberController.text.trim()),
-        'vehicle_name': adminSettings.showFullVehicleForm ? _newVehicleNameController.text.trim() : null,
+        'vehicle_name': null,
         'model_id': _selectedModelId,
         'Model name': modelName,
         'odometer': int.tryParse(_newOdometerController.text.trim()) ?? 0,
@@ -513,7 +529,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _saveJobCard() async {
+  Future<void> _saveJobCard({bool isDraft = false}) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     if (_complaints.isEmpty) {
       _showErrorSnackBar('Please add at least one complaint.');
@@ -611,7 +627,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
         );
       }
 
-      await _executeSaveJobCard();
+      await _executeSaveJobCard(isDraft: isDraft);
     } catch (e) {
       if (mounted) {
         Navigator.of(context).pop();
@@ -621,7 +637,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _executeSaveJobCard() async {
+  Future<void> _executeSaveJobCard({bool isDraft = false}) async {
     final user = Provider.of<UserProvider>(context, listen: false).user;
     if (user == null) {
       _showErrorSnackBar('You are not logged in.');
@@ -693,9 +709,13 @@ class _JobCardScreenState extends State<JobCardScreen> {
       Map<String, Map<String, String>> tyreDetails = {};
       for (String wheel in _requiredWheels) {
         final hasImage = _tyreQRImages[wheel] != null;
-        final spec = (_selectedGlobalTyreBrand != null && _selectedGlobalTyreModel != null)
-            ? '$_selectedGlobalTyreBrand $_selectedGlobalTyreModel'
-            : '';
+        final specParts = [
+          if (_selectedGlobalTyreBrand != null) _selectedGlobalTyreBrand,
+          if (_selectedGlobalTyreModel != null) _selectedGlobalTyreModel,
+          if (_selectedGlobalTyreSize != null) _selectedGlobalTyreSize,
+          if (_selectedGlobalTyreLiSi != null) _selectedGlobalTyreLiSi,
+        ];
+        final spec = specParts.isNotEmpty ? specParts.join(' ') : '';
         if (hasImage || spec.isNotEmpty) {
           tyreDetails[wheel] = {};
           if (hasImage) tyreDetails[wheel]!['has_image'] = 'true';
@@ -709,8 +729,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'executive_id': executiveId, // Passes int?
         'complaint': jsonEncode(_complaints),
         if (barcodeJson.isNotEmpty) 'barcode': barcodeJson,
-        'status': AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
-        'started_at': DateTime.now().toIso8601String(), // Start the timer immediately upon creation
+        'status': isDraft ? AppConstants.statusDraft : AppConstants.statusWorkInProgress, // Or should it be started? The timer just relies on started_at, but maybe it's fine.
+        'started_at': isDraft ? null : DateTime.now().toIso8601String(), // Start the timer immediately upon creation unless draft
         'marks': jsonEncode(marksJson),
         'odometer_reading': newOdometer, // Save the entered value
         'Owner name': _newClientNameController.text.trim(),
@@ -728,49 +748,40 @@ class _JobCardScreenState extends State<JobCardScreen> {
       }
 
       // Insert report and return its ID (jobId)
-      await vehicleService.createReport(context, insertData);
+      final inserted = await vehicleService.createReport(context, insertData);
       
-      // Get the inserted report ID by searching for the latest report for this vehicle
-      final inserted = await supabase
-          .from('reports')
-          .select('id, job_card_id')
-          .eq('vehicle_id', _currentVehicleId!)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .single();
       final int jobId = inserted['id'] as int;
       final String? jobCardId = inserted['job_card_id'] as String?;
 
-      // Upload media to Supabase Storage
-      List<String> uploadedUrls = [];
+      // Upload media to Supabase Storage in parallel
+      List<Future<String?>> uploadTasks = [];
       
       for (final entry in _wheelPhotos.entries) {
         final position = entry.key;
         final photoXFile = entry.value;
         final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final bytes = await photoXFile.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, fileName);
-        if (url != null) uploadedUrls.add(url);
+        uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
       }
       
-      if (_vehiclePhoto != null) {
-        final bytes = await _vehiclePhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
+      for (int i = 0; i < _vehiclePhotos.length; i++) {
+        final fileName = 'job_${jobId}_vehicle_${i}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        uploadTasks.add(_vehiclePhotos[i].readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
       }
       
       for (final entry in _tyreQRImages.entries) {
         final position = entry.key;
         final imageBytes = entry.value;
-        final url = await SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
+        final fileName = 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        uploadTasks.add(SupabaseService().uploadJobMedia(imageBytes, fileName));
       }
 
       if (_odometerPhoto != null) {
-        final bytes = await _odometerPhoto!.readAsBytes();
-        final url = await SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg');
-        if (url != null) uploadedUrls.add(url);
+        final fileName = 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        uploadTasks.add(_odometerPhoto!.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
       }
+
+      final results = await Future.wait(uploadTasks);
+      List<String> uploadedUrls = results.whereType<String>().toList();
       
       // Update the reports table with the photo_urls
       if (uploadedUrls.isNotEmpty) {
@@ -883,6 +894,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
         final hasImage = details['has_image'] == 'true';
         final spec = details['spec'] ?? '';
 
+        // Only add a PDF page if a QR image was actually captured for this wheel
+        if (!hasImage || _tyreQRImages[position] == null) continue;
+
         pdf.addPage(
           pw.Page(
             pageFormat: PdfPageFormat.a4,
@@ -937,6 +951,63 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
+  Future<String?> _showSearchableDropdown(String title, List<String> items) async {
+    String searchQuery = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final filteredItems = items
+                .where((item) => item.toLowerCase().contains(searchQuery.toLowerCase()))
+                .toList();
+            return AlertDialog(
+              title: Text(title),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Search',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (val) {
+                        setModalState(() {
+                          searchQuery = val;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filteredItems.length,
+                        itemBuilder: (context, index) {
+                          return ListTile(
+                            title: Text(filteredItems[index]),
+                            onTap: () => Navigator.pop(context, filteredItems[index]),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   // --- UI & MEDIA HELPERS ---
 
   void _addComplaint() {
@@ -972,6 +1043,145 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   void _deleteComplaint(int index) {
     setState(() => _complaints.removeAt(index));
+  }
+
+  void _editComplaintPrice(int index) {
+    int currentAmount = (_complaints[index]['amount'] as num?)?.toInt() ?? 0;
+    int currentQuantity = (_complaints[index]['quantity'] as num?)?.toInt() ?? 1;
+    
+    final rateController = TextEditingController(text: currentAmount > 0 ? (currentAmount ~/ currentQuantity).toString() : '0');
+    final qtyController = TextEditingController(text: currentQuantity.toString());
+    final totalController = TextEditingController(text: currentAmount.toString());
+
+    void updateCalculate() {
+      final rate = int.tryParse(rateController.text) ?? 0;
+      final qty = int.tryParse(qtyController.text) ?? 1;
+      totalController.text = (rate * qty).toString();
+    }
+
+    rateController.addListener(updateCalculate);
+    qtyController.addListener(updateCalculate);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Details'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: qtyController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Quantity (Count)'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: rateController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(prefixText: '₹ ', labelText: 'Rate per item'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: totalController,
+                readOnly: true,
+                decoration: const InputDecoration(prefixText: '₹ ', labelText: 'Total Auto-calculated Amount'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final newAmount = int.tryParse(totalController.text);
+                final newQty = int.tryParse(qtyController.text) ?? 1;
+                if (newAmount != null) {
+                  setState(() {
+                    _complaints[index]['amount'] = newAmount;
+                    _complaints[index]['quantity'] = newQty;
+                  });
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _syncTyreComplaint() {
+    final count = int.tryParse(_tyreCountController.text) ?? 0;
+    final price = double.tryParse(_tyrePriceController.text) ?? 0.0;
+    final total = (count * price).round();
+    _tyreTotalController.text = total > 0 ? total.toString() : '';
+
+    final specParts = [
+      if (_selectedGlobalTyreBrand != null) _selectedGlobalTyreBrand,
+      if (_selectedGlobalTyreModel != null) _selectedGlobalTyreModel,
+      if (_selectedGlobalTyreSize != null) _selectedGlobalTyreSize,
+      if (_selectedGlobalTyreLiSi != null) _selectedGlobalTyreLiSi,
+    ];
+    final spec = specParts.isNotEmpty ? specParts.join(' ') : 'New Tyres';
+
+    final index = _complaints.indexWhere((c) => c['text'].toString().startsWith('Tyre: '));
+    
+    if (count > 0 && price > 0) {
+      if (index >= 0) {
+        setState(() {
+          _complaints[index]['text'] = 'Tyre: $spec';
+          _complaints[index]['amount'] = total;
+          _complaints[index]['quantity'] = count;
+        });
+      } else {
+        setState(() {
+          _complaints.add({
+            'text': 'Tyre: $spec',
+            'amount': total,
+            'quantity': count,
+            'type': AppConstants.typeComplaint
+          });
+        });
+      }
+    } else {
+      if (index >= 0) {
+        setState(() {
+          _complaints.removeAt(index);
+        });
+      }
+    }
+  }
+
+  void _syncLabourCharge() {
+    final charge = int.tryParse(_labourChargeController.text) ?? 0;
+    final index = _complaints.indexWhere((c) => c['text'] == 'Labour Charge');
+    
+    if (charge > 0) {
+      if (index >= 0) {
+        setState(() {
+          _complaints[index]['amount'] = charge;
+        });
+      } else {
+        setState(() {
+          _complaints.add({
+            'text': 'Labour Charge',
+            'amount': charge,
+            'quantity': 1,
+            'type': AppConstants.typeComplaint
+          });
+        });
+      }
+    } else {
+      if (index >= 0) {
+        setState(() {
+          _complaints.removeAt(index);
+        });
+      }
+    }
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -1024,270 +1234,169 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _captureWheelPhoto(String position) async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  Widget _buildPhotoSlot(String label, XFile? photo, VoidCallback onTap, VoidCallback onRemove) {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
             children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: AppTheme.primaryColor),
-                title: const Text('Take Photo'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => MultiWheelCameraScreen(targets: [position]),
+              InkWell(
+                onTap: onTap,
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: photo == null
+                    ? const Icon(Icons.add_a_photo, color: Colors.grey, size: 30)
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.file(File(photo.path), fit: BoxFit.cover),
+                      ),
+              ),
+            ),
+            if (photo != null)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: GestureDetector(
+                  onTap: onRemove,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
                     ),
-                  );
-
-                  if (result != null && result is Map<String, XFile> && result.containsKey(position)) {
-                    setState(() => _wheelPhotos[position] = result[position]!);
-                  }
-                },
+                    child: const Icon(Icons.close, color: Colors.white, size: 16),
+                  ),
+                ),
               ),
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: AppTheme.primaryColor),
-                title: const Text('Choose from Gallery'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? pickedFile = await _picker.pickImage(
-                    source: ImageSource.gallery,
-                    imageQuality: 70,
-                    maxWidth: 1280,
-                  );
-                  if (pickedFile != null) {
-                    setState(() => _wheelPhotos[position] = pickedFile);
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      },
+          ],
+        ),
+      ),
+      const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
+  }
+
+  Future<void> _pickWheelPhoto(String position) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MultiWheelCameraScreen(targets: [position]),
+      ),
+    );
+
+    if (result != null && result is Map<String, XFile> && result.containsKey(position)) {
+      setState(() => _wheelPhotos[position] = result[position]!);
+    }
   }
 
   void _removeWheelPhoto(String position) {
     setState(() => _wheelPhotos.remove(position));
   }
 
-  Future<void> _captureVehiclePhoto() async {
-    final XFile? pickedFile = await _picker.pickImage(
-        source: ImageSource.camera, imageQuality: 60, maxWidth: 1280);
-    if (pickedFile != null) {
-      setState(() => _vehiclePhoto = pickedFile);
+  Future<void> _pickVehiclePhoto() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ContinuousCameraScreen(),
+      ),
+    );
+
+    if (result != null && result is List<String>) {
+      setState(() {
+        for (String path in result) {
+          _vehiclePhotos.add(XFile(path));
+        }
+      });
     }
   }
   
-  void _removeVehiclePhoto() {
-    setState(() => _vehiclePhoto = null);
+  void _removeVehiclePhoto(int index) {
+    setState(() => _vehiclePhotos.removeAt(index));
   }
 
   Future<void> _captureOdometerPhoto() async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const OdometerCameraScreen(),
       ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: AppTheme.primaryColor),
-                title: const Text('Take Photo & Scan'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const OdometerCameraScreen(),
-                    ),
-                  );
-
-                  if (result != null && result is Map<String, dynamic>) {
-                    setState(() {
-                      if (result['photo'] != null) {
-                        _odometerPhoto = result['photo'];
-                      }
-                      if (result['reading'] != null && result['reading'].toString().isNotEmpty) {
-                        _odometerController.text = result['reading'];
-                        _odometerError = Validators.validateOdometer(result['reading']);
-                      }
-                    });
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: AppTheme.primaryColor),
-                title: const Text('Upload & Scan from Gallery'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? pickedFile = await _picker.pickImage(
-                    source: ImageSource.gallery,
-                    imageQuality: 70,
-                    maxWidth: 1280,
-                  );
-                  if (pickedFile != null) {
-                    setState(() => _isLoading = true);
-                    
-                    try {
-                      // Process image with Google ML Kit
-                      final inputImage = InputImage.fromFilePath(pickedFile.path);
-                      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-                      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-                      await textRecognizer.close();
-
-                      // Extract best number
-                      String cleanText = recognizedText.text.replaceAll(RegExp(r'[^\w\s\.,]'), ' ');
-                      List<String> tokens = cleanText.split(RegExp(r'[\s\n]+'));
-                      
-                      String bestMatch = '';
-                      int maxDigits = 0;
-
-                      for (String token in tokens) {
-                        String noCommas = token.replaceAll(',', '');
-                        if (RegExp(r'^\d{3,7}$').hasMatch(noCommas)) {
-                          if (noCommas.length >= maxDigits) {
-                            maxDigits = noCommas.length;
-                            bestMatch = noCommas;
-                          }
-                        }
-                      }
-
-                      if (bestMatch.isEmpty) {
-                        final RegExp regExp = RegExp(r'\d+');
-                        final Iterable<Match> matches = regExp.allMatches(recognizedText.text.replaceAll(',', ''));
-                        for (final Match m in matches) {
-                          String numStr = m.group(0) ?? '';
-                          if (numStr.length >= maxDigits && numStr.length <= 7) {
-                            maxDigits = numStr.length;
-                            bestMatch = numStr;
-                          }
-                        }
-                      }
-
-                      setState(() {
-                        _isLoading = false;
-                        _odometerPhoto = pickedFile;
-                        if (bestMatch.isNotEmpty) {
-                          _odometerController.text = bestMatch;
-                          _odometerError = Validators.validateOdometer(bestMatch);
-                        }
-                      });
-                    } catch (e) {
-                      setState(() => _isLoading = false);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Failed to process image: $e')),
-                        );
-                      }
-                    }
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
+
+    if (result != null && result is Map<String, dynamic>) {
+      setState(() {
+        if (result['photo'] != null) {
+          _odometerPhoto = result['photo'];
+        }
+        if (result['reading'] != null && result['reading'].toString().isNotEmpty) {
+          _odometerController.text = result['reading'];
+          _odometerError = Validators.validateOdometer(result['reading']);
+        }
+      });
+    }
   }
 
   List<Widget> _buildDynamicTechnicianAssignments() {
+    // Group technicians by role
+    final Map<String, List<Map<String, dynamic>>> techsByRole = {};
+    for (var tech in _allTechnicians) {
+      final role = tech['role']?.toString() ?? 'Unassigned';
+      techsByRole.putIfAbsent(role, () => []).add(tech);
+    }
+
     List<Widget> widgets = [];
-    for (int i = 0; i < _technicianAssignments.length; i++) {
-      var assignment = _technicianAssignments[i];
-      
-      // Get IDs of technicians already assigned in OTHER slots
-      final assignedTechIds = _technicianAssignments
-          .where((a) => a != assignment && a['tech_id'] != null)
-          .map((a) => a['tech_id'])
-          .toSet();
-
-      // Filter available techs for the selected role AND exclude already assigned ones
-      var availableTechs = _allTechnicians.where((t) {
-        return t['role'] == assignment['role'] && !assignedTechIds.contains(t['id']);
-      }).toList();
-
+    techsByRole.forEach((role, techs) {
       widgets.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Role Dropdown
-              Expanded(
-                flex: 1,
-                child: DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(
-                    labelText: 'Tech Type',
-                    isDense: true,
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: assignment['role'],
-                  isExpanded: true, // Fixes RenderFlex overflow
-                  items: AppConstants.techRoles.map((role) {
-                    String displayRole = role.replaceAll('_', ' ');
-                    displayRole = displayRole[0].toUpperCase() + displayRole.substring(1);
-                    return DropdownMenuItem<String>(
-                      value: role,
-                      child: Text(displayRole, style: const TextStyle(fontSize: 13)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      assignment['role'] = value;
-                      assignment['tech_id'] = null; // Reset selected tech
-                    });
-                  },
+              Text(
+                role.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textSecondary,
                 ),
               ),
-              const SizedBox(width: 8),
-              // Tech Dropdown
-              Expanded(
-                flex: 1,
-                child: DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(
-                    labelText: 'Technician',
-                    isDense: true,
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: assignment['tech_id'],
-                  items: availableTechs.map((tech) {
-                    return DropdownMenuItem<int>(
-                      value: tech['id'] as int,
-                      child: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 13)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
+              const SizedBox(height: 8),
+              ...techs.map((tech) {
+                final isSelected = _technicianAssignments.any((a) => a['tech_id'] == tech['id']);
+                return CheckboxListTile(
+                  title: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 14)),
+                  value: isSelected,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (bool? checked) {
                     setState(() {
-                      assignment['tech_id'] = value;
+                      if (checked == true) {
+                        _technicianAssignments.add({'role': role, 'tech_id': tech['id']});
+                      } else {
+                        _technicianAssignments.removeWhere((a) => a['tech_id'] == tech['id']);
+                      }
                     });
                   },
-                  isExpanded: true,
-                ),
-              ),
-              // Delete Button
-              IconButton(
-                icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                onPressed: () {
-                  setState(() {
-                    _technicianAssignments.removeAt(i);
-                  });
-                },
-              ),
+                );
+              }).toList(),
             ],
           ),
         ),
       );
+    });
+
+    if (widgets.isEmpty) {
+      return [const Padding(padding: EdgeInsets.only(bottom: 16), child: Text('No technicians available.'))];
     }
     return widgets;
   }
@@ -1449,6 +1558,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          controller: _mainScrollController,
           padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1861,12 +1972,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const FormLabel(text: 'Vehicle Name'),
-                  TextField(
-                    controller: _newVehicleNameController,
-                    decoration: const InputDecoration(hintText: 'e.g., Swift VXI'),
-                  ),
-                  const SizedBox(height: 16),
                 ],
               );
             },
@@ -1997,19 +2102,28 @@ class _JobCardScreenState extends State<JobCardScreen> {
                         child: Row(
                           children: [
                             Expanded(child: Text(_complaints[index]['text'])),
-                            if (_complaints[index]['amount'] != null && _complaints[index]['amount'] > 0)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primaryColor.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '₹${_complaints[index]['amount']}',
-                                  style: const TextStyle(
-                                    color: AppTheme.primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
+                              GestureDetector(
+                                onTap: () => _editComplaintPrice(index),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryColor.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        '₹${_complaints[index]['amount'] ?? 0}${_complaints[index]['quantity'] != null && _complaints[index]['quantity'] > 1 ? ' (x${_complaints[index]['quantity']})' : ''}',
+                                        style: const TextStyle(
+                                          color: AppTheme.primaryColor,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      const Icon(Icons.edit, size: 12, color: AppTheme.primaryColor),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -2030,60 +2144,31 @@ class _JobCardScreenState extends State<JobCardScreen> {
           Row(
             children: [
               Expanded(
-                child: RawAutocomplete<String>(
-                  textEditingController: _complaintInputController,
+                child: TextField(
+                  controller: _complaintInputController,
                   focusNode: _complaintFocusNode,
-                  optionsBuilder: (TextEditingValue textEditingValue) {
-                    if (textEditingValue.text.isEmpty) {
-                      return _serviceCatalog.map((s) => s['name'].toString());
-                    }
-                    return _serviceCatalog
-                        .map((s) => s['name'].toString())
-                        .where((name) => name.toLowerCase().contains(textEditingValue.text.toLowerCase()));
-                  },
-                  onSelected: (String selection) {
-                    _complaintInputController.text = selection;
-                  },
-                  fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: const InputDecoration(
-                        hintText: 'Add complaint...',
-                        hintStyle: TextStyle(fontSize: 13),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                        suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
-                      ),
-                      onSubmitted: (_) => _addComplaint(),
-                    );
-                  },
-                  optionsViewBuilder: (context, onSelected, options) {
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 4.0,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
-                          child: ListView.builder(
-                            padding: EdgeInsets.zero,
-                            shrinkWrap: true,
-                            itemCount: options.length,
-                            itemBuilder: (context, index) {
-                              final String option = options.elementAt(index);
-                              return InkWell(
-                                onTap: () => onSelected(option),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Text(option),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                  readOnly: true,
+                  onTap: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => ServiceCatalogPicker(
+                        serviceCatalog: _serviceCatalog,
+                        onServiceSelected: (name, price) {
+                          _complaintInputController.text = name;
+                          _addComplaint();
+                        },
                       ),
                     );
                   },
+                  decoration: const InputDecoration(
+                    hintText: 'Select complaint (Category & Subcategory)...',
+                    hintStyle: TextStyle(fontSize: 13),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    prefixIcon: Icon(Icons.category, size: 18),
+                    suffixIcon: Icon(Icons.arrow_drop_down, color: Colors.grey),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -2097,67 +2182,220 @@ class _JobCardScreenState extends State<JobCardScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _labourChargeController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Labour Charge (₹)',
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.handyman, size: 18),
+            ),
+            onChanged: (val) => _syncLabourCharge(),
+          ),
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre Specification (Applies to all)'),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Brand',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: _selectedGlobalTyreBrand,
-                  items: () {
-                    final brands = _tyreCatalog.map((t) => t['brand'].toString()).toSet().toList();
+                child: InkWell(
+                  onTap: () async {
+                    final brands = _tyreCatalog.map((t) => t['brand'].toString().toUpperCase()).toSet().toList();
                     brands.sort();
-                    return brands.map((brand) => DropdownMenuItem(
-                      value: brand,
-                      child: Text(brand, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                    )).toList();
-                  }(),
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedGlobalTyreBrand = val;
-                      _selectedGlobalTyreModel = null;
-                    });
+                    final selected = await _showSearchableDropdown('Select Brand', brands);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreBrand = selected;
+                        _selectedGlobalTyreModel = null;
+                        _selectedGlobalTyreSize = null;
+                        _selectedGlobalTyreLiSi = null;
+                        _syncTyreComplaint();
+                      });
+                    }
                   },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Brand',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreBrand ?? 'Select Brand', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: DropdownButtonFormField<String>(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreBrand == null ? null : () async {
+                    final models = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand)
+                        .map((t) => t['model'].toString()).toSet().toList();
+                    models.sort();
+                    final selected = await _showSearchableDropdown('Select Model/Pattern', models);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreModel = selected;
+                        _selectedGlobalTyreSize = null;
+                        _selectedGlobalTyreLiSi = null;
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Model/Pattern',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreModel ?? 'Select Model', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreModel == null ? null : () async {
+                    final sizes = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel)
+                        .map((t) => t['size'].toString()).toSet().toList();
+                    sizes.sort();
+                    final selected = await _showSearchableDropdown('Select Size', sizes);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreSize = selected;
+                        _selectedGlobalTyreLiSi = null;
+                        
+                        // Check if LI/SI can be auto-selected
+                        final liSis = _tyreCatalog
+                          .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == selected)
+                          .map((t) => t['li_si']?.toString() ?? '')
+                          .where((liSi) => liSi.isNotEmpty)
+                          .toSet()
+                          .toList();
+                          
+                        if (liSis.length == 1) {
+                          _selectedGlobalTyreLiSi = liSis.first;
+                          final matchedTyre = _tyreCatalog.firstWhere(
+                            (t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == selected && t['li_si'].toString() == _selectedGlobalTyreLiSi,
+                            orElse: () => {},
+                          );
+                          if (matchedTyre.isNotEmpty && matchedTyre['billing_price'] != null) {
+                            _tyrePriceController.text = matchedTyre['billing_price'].toString();
+                          }
+                        } else {
+                          _tyrePriceController.clear();
+                        }
+                        
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Size',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreSize ?? 'Select Size', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreSize == null ? null : () async {
+                    final liSis = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == _selectedGlobalTyreSize)
+                        .map((t) => t['li_si']?.toString() ?? '')
+                        .where((liSi) => liSi.isNotEmpty)
+                        .toSet().toList();
+                    liSis.sort();
+                    final selected = await _showSearchableDropdown('Select LI/SI', liSis);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreLiSi = selected;
+                        
+                        // Autofill price
+                        final matchedTyre = _tyreCatalog.firstWhere(
+                          (t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == _selectedGlobalTyreSize && t['li_si'].toString() == selected,
+                          orElse: () => {},
+                        );
+                        if (matchedTyre.isNotEmpty && matchedTyre['billing_price'] != null) {
+                          _tyrePriceController.text = matchedTyre['billing_price'].toString();
+                        }
+                        
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'LI/SI',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreLiSi ?? 'Select LI/SI', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _tyreCountController,
+                  keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Model/Size',
+                    labelText: 'Tyre Count',
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
                   ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: _selectedGlobalTyreModel,
-                  isExpanded: true,
-                  items: _selectedGlobalTyreBrand == null
-                      ? []
-                      : () {
-                          final models = _tyreCatalog
-                              .where((t) => t['brand'] == _selectedGlobalTyreBrand)
-                              .map((t) => '${t['model']} ${t['size']}').toSet().toList();
-                          models.sort();
-                          return models.map((model) => DropdownMenuItem(
-                            value: model,
-                            child: Text(model, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                          )).toList();
-                        }(),
-                  onChanged: _selectedGlobalTyreBrand == null
-                      ? null
-                      : (val) {
-                          setState(() {
-                            _selectedGlobalTyreModel = val;
-                          });
-                        },
+                  onChanged: (val) => _syncTyreComplaint(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _tyrePriceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Price/Tyre',
+                    prefixText: '₹',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (val) => _syncTyreComplaint(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _tyreTotalController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Total',
+                    prefixText: '₹',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.black12,
+                  ),
                 ),
               ),
             ],
@@ -2298,7 +2536,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
             crossAxisSpacing: 8,
             children: _requiredWheels.map<Widget>((wheel) {
               final file = _wheelPhotos[wheel];
-              return _buildPhotoSlot(wheel, file, () => _captureWheelPhoto(wheel), () => _removeWheelPhoto(wheel));
+              return _buildPhotoSlot(wheel, file, () => _pickWheelPhoto(wheel), () => _removeWheelPhoto(wheel));
             }).toList(),
           ),
           const SizedBox(height: 16),
@@ -2307,7 +2545,27 @@ class _JobCardScreenState extends State<JobCardScreen> {
           Row(
             children: [
               Expanded(
-                child: _buildPhotoSlot('Vehicle', _vehiclePhoto, _captureVehiclePhoto, _removeVehiclePhoto),
+                child: SizedBox(
+                  height: 120, // Match the typical height of an aspect ratio 1 box
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _vehiclePhotos.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == _vehiclePhotos.length) {
+                        return Container(
+                          width: 120,
+                          margin: const EdgeInsets.only(right: 8),
+                          child: _buildPhotoSlot('Add Photo', null, _pickVehiclePhoto, () {}),
+                        );
+                      }
+                      return Container(
+                        width: 120,
+                        margin: const EdgeInsets.only(right: 8),
+                        child: _buildPhotoSlot('Vehicle ${index + 1}', _vehiclePhotos[index], () {}, () => _removeVehiclePhoto(index)),
+                      );
+                    },
+                  ),
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -2353,82 +2611,38 @@ class _JobCardScreenState extends State<JobCardScreen> {
           const FormLabel(text: 'Assign Technicians (Optional)'),
           const SizedBox(height: 8),
           ..._buildDynamicTechnicianAssignments(),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () {
-                setState(() {
-                  _technicianAssignments.add({'role': null, 'tech_id': null});
-                });
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('Add Technician'),
-            ),
-          ),
           const SizedBox(height: 32),
 
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _isLoading ? null : _saveJobCard,
-              icon: const Icon(Icons.add_task),
-              label: const Text('Create Job Card'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: OutlinedButton.icon(
+                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: true),
+                    icon: const Icon(Icons.bookmark_border),
+                    label: const FittedBox(fit: BoxFit.scaleDown, child: Text('Save for Later')),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
+                    icon: const Icon(Icons.add_task, size: 20),
+                    label: const FittedBox(fit: BoxFit.scaleDown, child: Text('Create Job Card')),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
-  Widget _buildPhotoSlot(String title, XFile? file, VoidCallback onCapture, VoidCallback onRemove) {
-    return GestureDetector(
-      onTap: file == null ? onCapture : null,
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: file != null ? Colors.green : Colors.grey.shade300),
-                ),
-                child: file != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: kIsWeb
-                            ? Image.network(file.path, fit: BoxFit.cover)
-                            : Image.file(File(file.path), fit: BoxFit.cover),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt, color: Colors.grey.shade400, size: 32),
-                          const SizedBox(height: 4),
-                          Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                        ],
-                      ),
-              ),
-            ),
-            if (file != null)
-              Positioned(
-                top: 4,
-                right: 4,
-                child: GestureDetector(
-                  onTap: onRemove,
-                  child: Container(
-                    decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-                    padding: const EdgeInsets.all(4),
-                    child: const Icon(Icons.close, color: Colors.white, size: 16),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
+
 }
 
 // Custom Painter for drawing damage marks

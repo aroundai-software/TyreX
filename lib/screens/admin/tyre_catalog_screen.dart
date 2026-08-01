@@ -14,6 +14,9 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
   final _brandController = TextEditingController();
   final _modelController = TextEditingController();
   final _sizeController = TextEditingController();
+  final _liSiController = TextEditingController();
+  final _basicPriceController = TextEditingController();
+  final _billingPriceController = TextEditingController();
 
   List<Map<String, dynamic>> _tyres = [];
   bool _isLoading = false;
@@ -30,6 +33,9 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
     _brandController.dispose();
     _modelController.dispose();
     _sizeController.dispose();
+    _liSiController.dispose();
+    _basicPriceController.dispose();
+    _billingPriceController.dispose();
     super.dispose();
   }
 
@@ -51,6 +57,9 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
     final brand = _brandController.text.trim().toUpperCase();
     final model = _modelController.text.trim();
     final size = _sizeController.text.trim().toUpperCase();
+    final liSi = _liSiController.text.trim();
+    final basicPrice = double.tryParse(_basicPriceController.text.trim());
+    final billingPrice = double.tryParse(_billingPriceController.text.trim());
     
     if (brand.isEmpty || model.isEmpty || size.isEmpty) {
       _showError('Brand, Model, and Size are required.');
@@ -61,10 +70,10 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
 
     try {
       if (_editingId != null) {
-        await _supabaseService.updateTyreCatalogItem(_editingId!, brand, model, size);
+        await _supabaseService.updateTyreCatalogItem(_editingId!, brand, model, size, liSi: liSi, basicPrice: basicPrice, billingPrice: billingPrice);
         _showSuccess('Tyre updated successfully.');
       } else {
-        await _supabaseService.addTyreCatalogItem(brand, model, size);
+        await _supabaseService.addTyreCatalogItem(brand, model, size, liSi: liSi, basicPrice: basicPrice, billingPrice: billingPrice);
         _showSuccess('Tyre added successfully.');
       }
       _resetForm();
@@ -101,6 +110,9 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
       _brandController.text = tyre['brand'];
       _modelController.text = tyre['model'];
       _sizeController.text = tyre['size'];
+      _liSiController.text = tyre['li_si']?.toString() ?? '';
+      _basicPriceController.text = tyre['basic_price']?.toString() ?? '';
+      _billingPriceController.text = tyre['billing_price']?.toString() ?? '';
     });
   }
 
@@ -110,6 +122,9 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
       _brandController.clear();
       _modelController.clear();
       _sizeController.clear();
+      _liSiController.clear();
+      _basicPriceController.clear();
+      _billingPriceController.clear();
     });
   }
 
@@ -272,13 +287,56 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
                             ],
                           ),
                           const SizedBox(height: 16),
-                          TextField(
-                            controller: _sizeController,
-                            decoration: const InputDecoration(
-                              labelText: 'Size *',
-                              hintText: 'e.g., 205/55 R16',
-                            ),
-                            textCapitalization: TextCapitalization.characters,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _sizeController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Size *',
+                                    hintText: 'e.g., 205/55 R16',
+                                  ),
+                                  textCapitalization: TextCapitalization.characters,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextField(
+                                  controller: _liSiController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'LI/SI',
+                                    hintText: 'e.g., 91V',
+                                  ),
+                                  textCapitalization: TextCapitalization.characters,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _basicPriceController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Basic Price',
+                                    prefixText: '₹ ',
+                                  ),
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextField(
+                                  controller: _billingPriceController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Billing Price',
+                                    prefixText: '₹ ',
+                                  ),
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       );
@@ -405,12 +463,24 @@ class _TyreCatalogScreenState extends State<TyreCatalogScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      '${item['model']} - ${item['size']}',
+                                      '${item['model']} - ${item['size']} ${item['li_si'] != null && item['li_si'].toString().isNotEmpty ? '(${item['li_si']})' : ''}',
                                       style: const TextStyle(
                                         color: AppTheme.textSecondary,
                                         fontSize: 14,
                                       ),
                                     ),
+                                    if (item['billing_price'] != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 4.0),
+                                        child: Text(
+                                          '₹${item['billing_price']}',
+                                          style: const TextStyle(
+                                            color: AppTheme.primaryColor,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                 ),
                               ),

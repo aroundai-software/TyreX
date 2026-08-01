@@ -1133,6 +1133,20 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   void _showMobileReportDetails(Map<String, dynamic> report, List<String> columnNames, DataRow row) {
+    bool hasQr = false;
+    try {
+      final barcodeContent = report['barcode'] as String?;
+      if (barcodeContent != null && barcodeContent.isNotEmpty && barcodeContent != '{}') {
+        final Map<String, dynamic> barcodeData = jsonDecode(barcodeContent);
+        hasQr = barcodeData.values.any((details) {
+          if (details is Map) {
+            return details['qr']?.toString().isNotEmpty == true || details['has_image']?.toString() == 'true';
+          }
+          return false;
+        });
+      }
+    } catch (_) {}
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) {
@@ -1143,7 +1157,7 @@ class _ReportScreenState extends State<ReportScreen> {
               centerTitle: true,
               elevation: 0,
               actions: [
-                if ((report['barcode'] as String?)?.isNotEmpty == true && report['barcode'] != '{}')
+                if (hasQr)
                   IconButton(
                     icon: const Icon(Icons.share, color: Colors.blue),
                     onPressed: () => _shareWarrantyPDF(report),

@@ -80,21 +80,22 @@ class VehicleService {
   /// ===== REPORT/JOB CARD OPERATIONS =====
 
   /// Create report with auto-filled company fields
-  Future<void> createReport(BuildContext context, Map<String, dynamic> reportData) async {
+  Future<Map<String, dynamic>> createReport(BuildContext context, Map<String, dynamic> reportData) async {
     if (!CompanyService().hasActiveCompany) {
-      debugPrint('⚠️ VehicleService: No company selected — Guid will not be saved');
+      debugPrint('⚠️ VehicleService: No company selected - Guid will not be saved');
     } else {
-      debugPrint('🔵 VehicleService: Company Guid=${CompanyService().guid}');
+      debugPrint('ℹ️ VehicleService: Company Guid=${CompanyService().guid}');
     }
 
     // Auto-fill company fields for new reports
     final dataWithCompany = CompanyService().addCompanyFields(reportData, tableName: 'reports');
 
     try {
-      await _client.from('reports').insert(dataWithCompany);
-      debugPrint('✅ VehicleService: Report inserted successfully');
+      final response = await _client.from('reports').insert(dataWithCompany).select().single();
+      debugPrint('🟢 VehicleService: Report inserted successfully');
+      return response;
     } catch (e) {
-      debugPrint('❌ VehicleService: Failed to insert report: $e');
+      debugPrint('🔴 VehicleService: Failed to insert report: $e');
       throw Exception('Failed to create report: $e');
     }
   }

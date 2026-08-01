@@ -696,9 +696,15 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                ...[..._complaints, ..._suggestions].map((item) {
-                  final isComplaint =
-                      item['type'] == AppConstants.typeComplaint;
+                ...[..._complaints, ..._suggestions].where((item) {
+                  final isComplaintType = item['type'] == AppConstants.typeComplaint;
+                  final text = item['text']?.toString().toLowerCase() ?? '';
+                  if (!isComplaintType && text.contains('labour')) {
+                    return false;
+                  }
+                  return true;
+                }).map((item) {
+                  final isComplaint = item['type'] == AppConstants.typeComplaint;
                   final amount =
                       (item['amount'] as num?)?.toDouble() ?? 0.0;
                   return Padding(
@@ -719,13 +725,29 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
                           ),
                         ),
                         Expanded(
-                          child: Text(
-                            item['text'] ?? '',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.textPrimary,
-                              height: 1.4,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item['text'] ?? '',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: AppTheme.textPrimary,
+                                  height: 1.4,
+                                ),
+                              ),
+                              if (item['category'] != null && item['category'].toString().isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  item['category'],
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.blueGrey,
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         if (amount > 0) ...[
@@ -755,6 +777,118 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
 
         const SizedBox(height: 24),
         _buildScannedQRsSection(),
+        const SizedBox(height: 24),
+        _buildVehiclePhotosSection(),
+      ],
+    );
+  }
+
+  Widget _buildPhotoRow(String title, List<String> urls) {
+    if (urls.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 160,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: urls.length,
+            itemBuilder: (context, index) {
+              final url = urls[index];
+              return Container(
+                width: 140,
+                margin: const EdgeInsets.only(right: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                        child: Image.network(url, fit: BoxFit.cover, width: double.infinity),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () async {
+                        try {
+                          final response = await http.get(Uri.parse(url));
+                          final dir = await getTemporaryDirectory();
+                          final file = File('${dir.path}/photo_${DateTime.now().millisecondsSinceEpoch}_$index.jpg');
+                          await file.writeAsBytes(response.bodyBytes);
+                          await Share.shareXFiles([XFile(file.path)], text: 'Job photo');
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to share: $e')));
+                          }
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        width: double.infinity,
+                        decoration: const BoxDecoration(
+                          color: AppTheme.primaryColor,
+                          borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.share, size: 16, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('Share', style: TextStyle(color: Colors.white, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVehiclePhotosSection() {
+    final photoUrlsDynamic = _report?['photo_urls'];
+    if (photoUrlsDynamic == null) return const SizedBox.shrink();
+    
+    List<String> photoUrls = [];
+    if (photoUrlsDynamic is List) {
+      photoUrls = photoUrlsDynamic.map((e) => e.toString()).toList();
+    } else if (photoUrlsDynamic is String && photoUrlsDynamic.startsWith('[')) {
+      try {
+        final decoded = jsonDecode(photoUrlsDynamic) as List;
+        photoUrls = decoded.map((e) => e.toString()).toList();
+      } catch (_) {}
+    }
+    
+    final qrUrls = photoUrls.where((url) => url.contains('_tyreqr_')).toList();
+    final wheelUrls = photoUrls.where((url) => url.contains('_wheel_')).toList();
+    final vehicleUrls = photoUrls.where((url) => url.contains('_vehicle_')).toList();
+    final odometerUrls = photoUrls.where((url) => url.contains('_odometer_')).toList();
+    final otherUrls = photoUrls.where((url) => !url.contains('_tyreqr_') && !url.contains('_wheel_') && !url.contains('_vehicle_') && !url.contains('_odometer_') && !url.contains('_barcode_')).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildPhotoRow('Scanned Tyre QRs', qrUrls),
+        _buildPhotoRow('Wheel Images', wheelUrls),
+        _buildPhotoRow('Vehicle Overall Photos', vehicleUrls),
+        _buildPhotoRow('Odometer Image', odometerUrls),
+        _buildPhotoRow('Other Photos', otherUrls),
       ],
     );
   }

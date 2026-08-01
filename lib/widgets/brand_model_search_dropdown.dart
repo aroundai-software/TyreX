@@ -59,6 +59,7 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
   Future<void> _loadAllModels() async {
     try {
       final models = await _supabaseService.getAllVehicleModels();
+      models.sort((a, b) => (a['Model name'] as String).toLowerCase().compareTo((b['Model name'] as String).toLowerCase()));
       if (mounted) {
         setState(() {
           _allModels = models;
@@ -86,10 +87,17 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
     setState(() {
       _selectedLetter = letter;
       _searchController.clear();
-      _filteredBrands = _uniqueBrands
-          .where((brand) => brand.toUpperCase().startsWith(letter))
-          .toList();
-      _showBrandDropdown = true;
+      if (_selectedBrand == null) {
+        _filteredBrands = _uniqueBrands
+            .where((brand) => brand.toUpperCase().startsWith(letter))
+            .toList();
+        _showBrandDropdown = true;
+      } else {
+        _filteredModels = _allModels
+            .where((m) => m['brand'] == _selectedBrand && (m['Model name'] as String).toUpperCase().startsWith(letter))
+            .toList();
+        _showModelDropdown = true;
+      }
     });
   }
 
@@ -97,11 +105,21 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
     setState(() {
       _selectedLetter = null;
       if (query.isEmpty) {
-        _filteredBrands = _uniqueBrands;
+        if (_selectedBrand == null) {
+          _filteredBrands = _uniqueBrands;
+        } else {
+          _filteredModels = _allModels.where((m) => m['brand'] == _selectedBrand).toList();
+        }
       } else {
-        _filteredBrands = _uniqueBrands
-            .where((brand) => brand.toLowerCase().contains(query.toLowerCase()))
-            .toList();
+        if (_selectedBrand == null) {
+          _filteredBrands = _uniqueBrands
+              .where((brand) => brand.toLowerCase().contains(query.toLowerCase()))
+              .toList();
+        } else {
+          _filteredModels = _allModels
+              .where((m) => m['brand'] == _selectedBrand && (m['Model name'] as String).toLowerCase().contains(query.toLowerCase()))
+              .toList();
+        }
       }
     });
   }
@@ -112,6 +130,8 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
       _selectedModelId = null;
       _selectedModelName = null;
       _showBrandDropdown = false;
+      _selectedLetter = null;
+      _searchController.clear();
       _filteredModels = _allModels
           .where((m) => m['brand'] == brand)
           .toList();
@@ -177,8 +197,13 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
                   setState(() {
                     _selectedLetter = null;
                     _searchController.clear();
-                    _filteredBrands = _uniqueBrands;
-                    _showBrandDropdown = true;
+                    if (_selectedBrand == null) {
+                      _filteredBrands = _uniqueBrands;
+                      _showBrandDropdown = true;
+                    } else {
+                      _filteredModels = _allModels.where((m) => m['brand'] == _selectedBrand).toList();
+                      _showModelDropdown = true;
+                    }
                   });
                 },
                 child: Container(
@@ -210,9 +235,9 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
             // Alphabet buttons
             ..._alphabet.map((letter) {
               final isSelected = _selectedLetter == letter;
-              final hasItems = _uniqueBrands.any(
-                (brand) => brand.toUpperCase().startsWith(letter),
-              );
+              final hasItems = _selectedBrand == null
+                  ? _uniqueBrands.any((brand) => brand.toUpperCase().startsWith(letter))
+                  : _allModels.any((m) => m['brand'] == _selectedBrand && (m['Model name'] as String).toUpperCase().startsWith(letter));
               
               return Padding(
                 padding: const EdgeInsets.only(right: 4),
@@ -429,7 +454,7 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
   Widget _buildModelSelector() {
     final modelsForBrand = _selectedBrand == null
         ? <Map<String, dynamic>>[]
-        : _allModels.where((m) => m['brand'] == _selectedBrand).toList();
+        : _filteredModels;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

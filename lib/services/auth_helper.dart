@@ -30,7 +30,7 @@ class AuthHelper {
         if (!context.mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
-              (route) => false,
+          (route) => false,
         );
 
         if (!context.mounted) return;
@@ -47,7 +47,8 @@ class AuthHelper {
         //   ),
         // );
       } catch (e) {
-        await _performNormalLogout(context, prefs, userProvider, reportProvider);
+        await _performNormalLogout(
+            context, prefs, userProvider, reportProvider);
       }
     } else {
       await _performNormalLogout(context, prefs, userProvider, reportProvider);
@@ -55,11 +56,11 @@ class AuthHelper {
   }
 
   static Future<void> _performNormalLogout(
-      BuildContext context,
-      SharedPreferences prefs,
-      UserProvider userProvider,
-      ReportProvider reportProvider,
-      ) async {
+    BuildContext context,
+    SharedPreferences prefs,
+    UserProvider userProvider,
+    ReportProvider reportProvider,
+  ) async {
     await prefs.remove('currentUser');
     await prefs.remove('originalAdmin');
 
@@ -69,10 +70,9 @@ class AuthHelper {
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
+      (route) => false,
     );
   }
-
 
   /// Check if currently in a Quick Access session
   static Future<bool> isQuickAccessSession() async {

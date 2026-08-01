@@ -164,7 +164,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -727,8 +727,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     if (_currentReportId == null || _isSubmitting) return;
 
     // ✅ Determine target tab for navigation
-    int targetTabIndex = 0; // Default to Work in Progress
-    if (_openedFromTab == 'Drafts' && !convertToJobCard) targetTabIndex = 1;
+    int targetTabIndex = 1; // Default to Pending Jobs
+    if (_openedFromTab == 'Work in Progress') targetTabIndex = 3;
+    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 2 : 0;
+
 
 
     // Prepare data early for validation
@@ -1576,19 +1578,12 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         final unassignedJobs = reportProvider.unassignedReports;
         final allReports = reportProvider.reports;
 
-        String q = _mainSearchController.text.toLowerCase();
-        bool matchesSearch(Map<String, dynamic> r) {
-          if (q.isEmpty) return true;
-          final v = r['vehicles']?['Vehicle Number']?.toString().toLowerCase() ?? '';
-          return v.contains(q);
-        }
-
         final draftJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusDraft && matchesSearch(r))
+            .where((r) => r['status'] == AppConstants.statusDraft)
             .toList();
 
         final pendingJobs = allReports
-            .where((r) => (r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled) && matchesSearch(r))
+            .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
             .toList();
             
         final workInProgressJobs = allReports
@@ -1601,6 +1596,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             
         final cancelledJobs = allReports
             .where((r) => r['status'] == AppConstants.statusCancelled && matchesSearch(r))
+            .toList();
+            
+        final cancelledJobs = allReports
+            .where((r) => r['status'] == AppConstants.statusCancelled)
             .toList();
             
         // Direct bookings tab removed per requirements
@@ -1711,8 +1710,11 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                   builder: (context, adminSettings, _) {
                     List<Widget> tabs = [];
                     tabs.addAll([
-                      _buildProfessionalTab('Work in Progress', workInProgressJobs.length),
                       _buildProfessionalTab('Drafts', draftJobs.length),
+                      _buildProfessionalTab('Jobs', pendingJobs.length),
+                      _buildProfessionalTab('Work in Progress', workInProgressJobs.length),
+                      _buildProfessionalTab('Completed', completedJobs.length),
+                      _buildProfessionalTab('Cancelled', cancelledJobs.length),
                     ]);
                     
                     return TabBar(
@@ -1747,8 +1749,11 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     builder: (context, adminSettings, _) {
                       List<Widget> tabViews = [];
                       tabViews.addAll([
-                        _buildJobList(workInProgressJobs, 'No jobs currently in progress.', 'Work in Progress'),
                         _buildJobList(draftJobs, 'No saved drafts.', 'Drafts'),
+                        _buildJobList(pendingJobs, 'No jobs are currently pending.', 'Jobs'),
+                        _buildJobList(workInProgressJobs, 'No jobs currently in progress.', 'Work in Progress'),
+                        _buildJobList(completedJobs, 'No completed jobs.', 'Completed'),
+                        _buildJobList(cancelledJobs, 'No cancelled jobs.', 'Cancelled'),
                       ]);
                       
                       return TabBarView(
@@ -2017,22 +2022,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       color: AppTheme.textPrimary,
                                     ),
                                   ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.blueGrey.shade50,
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: Colors.blueGrey.shade100),
-                                    ),
-                                    child: Text(
-                                      vehicleNo,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.blueGrey.shade700,
-                                      ),
-                                    ),
-                                  ),
                                   if (job['status'] == AppConstants.statusCancelled)
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2078,7 +2067,16 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       ),
                                     ),
                                   
-
+                                  if (job['status'] == AppConstants.statusCancelled)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFFEE2E2),
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(color: const Color(0xFFFCA5A5)),
+                                      ),
+                                      child: const Text('Cancelled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB91C1C))),
+                                    ),
                                   if (job['status'] == AppConstants.statusDraft)
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -4298,7 +4296,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           const SizedBox(height: 24),
           
           // Action Buttons
-          if (_openedFromTab != 'Completed Jobs' && !isCancelled)
+          if (_openedFromTab != 'Completed' && !isCancelled)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
@@ -4330,7 +4328,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         icon: isFormBusy
                             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor))
                             : const Icon(Icons.save, size: 20),
-                        label: const Text('Save for Later', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                        label: const Text('Save Draft Updates', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppTheme.primaryColor,
                           padding: const EdgeInsets.symmetric(vertical: 16),
@@ -4371,7 +4369,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               ),
             ),
           
-          if (_openedFromTab != 'Completed Jobs' && !isCancelled)
+          if (_openedFromTab != 'Completed' && !isCancelled)
             const SizedBox(height: 24),
         ],
       ),

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'update_screen.dart';
+import 'continuous_camera_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -38,6 +40,7 @@ import '../providers/user_provider.dart';
 import '../providers/report_provider.dart';
 import '../providers/admin_settings_provider.dart';
 import '../widgets/brand_model_search_dropdown.dart';
+import '../widgets/service_catalog_picker.dart';
 
 class JobCardScreen extends StatefulWidget {
   final int? bookingId;
@@ -56,6 +59,7 @@ class JobCardScreen extends StatefulWidget {
 }
 
 class _JobCardScreenState extends State<JobCardScreen> {
+  final ScrollController _mainScrollController = ScrollController();
   // Controllers
   final _vehicleNumberController = TextEditingController();
   final _newVehicleNameController = TextEditingController();
@@ -72,6 +76,11 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final FocusNode _complaintFocusNode = FocusNode();
   String? _selectedGlobalTyreBrand;
   String? _selectedGlobalTyreModel;
+  String? _selectedGlobalTyreSize;
+  String? _selectedGlobalTyreLiSi;
+  final TextEditingController _tyreCountController = TextEditingController();
+  final TextEditingController _tyrePriceController = TextEditingController();
+  final TextEditingController _tyreTotalController = TextEditingController();
 
   // Owner Master Field
   final _ownerGstController = TextEditingController();
@@ -168,7 +177,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   
   // Media & Barcode
   final Map<String, XFile> _wheelPhotos = {};
-  XFile? _vehiclePhoto;
+  final List<XFile> _vehiclePhotos = [];
   XFile? _odometerPhoto;
   
   // Tyre Warranty Details
@@ -178,9 +187,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
   
   final List<String> _requiredWheels = [
     'Front Left',
-    'Front Right',
     'Rear Left',
     'Rear Right',
+    'Front Right',
     'Stepney'
   ];
   final GlobalKey _imageKey = GlobalKey();
@@ -265,6 +274,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   @override
   void dispose() {
+    _mainScrollController.dispose();
     _complaintFocusNode.dispose();
     _vehicleNumberController.dispose();
     _newVehicleNameController.dispose();
@@ -289,6 +299,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       controller.dispose();
     }
     
+    _tyreCountController.dispose();
+    _tyrePriceController.dispose();
+    _tyreTotalController.dispose();
     super.dispose();
   }
 
@@ -317,11 +330,13 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _laborCostController.clear();
       _selectedGlobalTyreBrand = null;
       _selectedGlobalTyreModel = null;
+      _selectedGlobalTyreSize = null;
+      _selectedGlobalTyreLiSi = null;
       _selectedBrand = null;
       _selectedModelId = null;
       _selectedModelName = null;
       _wheelPhotos.clear();
-      _vehiclePhoto = null;
+      _vehiclePhotos.clear();
       for (String wheel in _requiredWheels) {
         _tyreQRControllers[wheel]?.clear();
         _tyreSpecControllers[wheel]?.clear();
@@ -500,10 +515,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       
       final ownerId = await vehicleService.createOrUpdateOwner(context, ownerData);
 
-      // Then save vehicle details with owner reference
       final vehicleData = {
         'Vehicle Number': VehicleNumberUtils.normalize(_vehicleNumberController.text.trim()),
-        'vehicle_name': adminSettings.showFullVehicleForm ? _newVehicleNameController.text.trim() : null,
+        'vehicle_name': null,
         'model_id': _selectedModelId,
         'Model name': modelName,
         'odometer': int.tryParse(_newOdometerController.text.trim()) ?? 0,
@@ -776,16 +790,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       }
 
       // Insert report and return its ID (jobId)
-      await vehicleService.createReport(context, insertData);
+      final inserted = await vehicleService.createReport(context, insertData);
       
-      // Get the inserted report ID by searching for the latest report for this vehicle
-      final inserted = await supabase
-          .from('reports')
-          .select('id, job_card_id')
-          .eq('vehicle_id', _currentVehicleId!)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .single();
       final int jobId = inserted['id'] as int;
       final String? jobCardId = inserted['job_card_id'] as String?;
 
@@ -944,6 +950,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
         final hasImage = details['has_image'] == 'true';
         final spec = details['spec'] ?? '';
 
+        // Only add a PDF page if a QR image was actually captured for this wheel
+        if (!hasImage || _tyreQRImages[position] == null) continue;
+
         pdf.addPage(
           pw.Page(
             pageFormat: PdfPageFormat.a4,
@@ -996,6 +1005,63 @@ class _JobCardScreenState extends State<JobCardScreen> {
     } catch (e) {
       _showErrorSnackBar('Error generating or sharing PDF: $e');
     }
+  }
+
+  Future<String?> _showSearchableDropdown(String title, List<String> items) async {
+    String searchQuery = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final filteredItems = items
+                .where((item) => item.toLowerCase().contains(searchQuery.toLowerCase()))
+                .toList();
+            return AlertDialog(
+              title: Text(title),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'Search',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (val) {
+                        setModalState(() {
+                          searchQuery = val;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filteredItems.length,
+                        itemBuilder: (context, index) {
+                          return ListTile(
+                            title: Text(filteredItems[index]),
+                            onTap: () => Navigator.pop(context, filteredItems[index]),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   // --- UI & MEDIA HELPERS ---
@@ -1165,270 +1231,169 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Future<void> _captureWheelPhoto(String position) async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  Widget _buildPhotoSlot(String label, XFile? photo, VoidCallback onTap, VoidCallback onRemove) {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
             children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: AppTheme.primaryColor),
-                title: const Text('Take Photo'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => MultiWheelCameraScreen(targets: [position]),
+              InkWell(
+                onTap: onTap,
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: Colors.grey.shade300, width: 1.5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: photo == null
+                    ? const Icon(Icons.add_a_photo, color: Colors.grey, size: 30)
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.file(File(photo.path), fit: BoxFit.cover),
+                      ),
+              ),
+            ),
+            if (photo != null)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: GestureDetector(
+                  onTap: onRemove,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: Colors.redAccent,
+                      shape: BoxShape.circle,
                     ),
-                  );
-
-                  if (result != null && result is Map<String, XFile> && result.containsKey(position)) {
-                    setState(() => _wheelPhotos[position] = result[position]!);
-                  }
-                },
+                    child: const Icon(Icons.close, color: Colors.white, size: 16),
+                  ),
+                ),
               ),
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: AppTheme.primaryColor),
-                title: const Text('Choose from Gallery'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? pickedFile = await _picker.pickImage(
-                    source: ImageSource.gallery,
-                    imageQuality: 70,
-                    maxWidth: 1280,
-                  );
-                  if (pickedFile != null) {
-                    setState(() => _wheelPhotos[position] = pickedFile);
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      },
+          ],
+        ),
+      ),
+      const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
+  }
+
+  Future<void> _pickWheelPhoto(String position) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MultiWheelCameraScreen(targets: [position]),
+      ),
+    );
+
+    if (result != null && result is Map<String, XFile> && result.containsKey(position)) {
+      setState(() => _wheelPhotos[position] = result[position]!);
+    }
   }
 
   void _removeWheelPhoto(String position) {
     setState(() => _wheelPhotos.remove(position));
   }
 
-  Future<void> _captureVehiclePhoto() async {
-    final XFile? pickedFile = await _picker.pickImage(
-        source: ImageSource.camera, imageQuality: 60, maxWidth: 1280);
-    if (pickedFile != null) {
-      setState(() => _vehiclePhoto = pickedFile);
+  Future<void> _pickVehiclePhoto() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ContinuousCameraScreen(),
+      ),
+    );
+
+    if (result != null && result is List<String>) {
+      setState(() {
+        for (String path in result) {
+          _vehiclePhotos.add(XFile(path));
+        }
+      });
     }
   }
   
-  void _removeVehiclePhoto() {
-    setState(() => _vehiclePhoto = null);
+  void _removeVehiclePhoto(int index) {
+    setState(() => _vehiclePhotos.removeAt(index));
   }
 
   Future<void> _captureOdometerPhoto() async {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const OdometerCameraScreen(),
       ),
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: AppTheme.primaryColor),
-                title: const Text('Take Photo & Scan'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const OdometerCameraScreen(),
-                    ),
-                  );
-
-                  if (result != null && result is Map<String, dynamic>) {
-                    setState(() {
-                      if (result['photo'] != null) {
-                        _odometerPhoto = result['photo'];
-                      }
-                      if (result['reading'] != null && result['reading'].toString().isNotEmpty) {
-                        _odometerController.text = result['reading'];
-                        _odometerError = Validators.validateOdometer(result['reading']);
-                      }
-                    });
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: AppTheme.primaryColor),
-                title: const Text('Upload & Scan from Gallery'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final XFile? pickedFile = await _picker.pickImage(
-                    source: ImageSource.gallery,
-                    imageQuality: 70,
-                    maxWidth: 1280,
-                  );
-                  if (pickedFile != null) {
-                    setState(() => _isLoading = true);
-                    
-                    try {
-                      // Process image with Google ML Kit
-                      final inputImage = InputImage.fromFilePath(pickedFile.path);
-                      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-                      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-                      await textRecognizer.close();
-
-                      // Extract best number
-                      String cleanText = recognizedText.text.replaceAll(RegExp(r'[^\w\s\.,]'), ' ');
-                      List<String> tokens = cleanText.split(RegExp(r'[\s\n]+'));
-                      
-                      String bestMatch = '';
-                      int maxDigits = 0;
-
-                      for (String token in tokens) {
-                        String noCommas = token.replaceAll(',', '');
-                        if (RegExp(r'^\d{3,7}$').hasMatch(noCommas)) {
-                          if (noCommas.length >= maxDigits) {
-                            maxDigits = noCommas.length;
-                            bestMatch = noCommas;
-                          }
-                        }
-                      }
-
-                      if (bestMatch.isEmpty) {
-                        final RegExp regExp = RegExp(r'\d+');
-                        final Iterable<Match> matches = regExp.allMatches(recognizedText.text.replaceAll(',', ''));
-                        for (final Match m in matches) {
-                          String numStr = m.group(0) ?? '';
-                          if (numStr.length >= maxDigits && numStr.length <= 7) {
-                            maxDigits = numStr.length;
-                            bestMatch = numStr;
-                          }
-                        }
-                      }
-
-                      setState(() {
-                        _isLoading = false;
-                        _odometerPhoto = pickedFile;
-                        if (bestMatch.isNotEmpty) {
-                          _odometerController.text = bestMatch;
-                          _odometerError = Validators.validateOdometer(bestMatch);
-                        }
-                      });
-                    } catch (e) {
-                      setState(() => _isLoading = false);
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Failed to process image: $e')),
-                        );
-                      }
-                    }
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
+
+    if (result != null && result is Map<String, dynamic>) {
+      setState(() {
+        if (result['photo'] != null) {
+          _odometerPhoto = result['photo'];
+        }
+        if (result['reading'] != null && result['reading'].toString().isNotEmpty) {
+          _odometerController.text = result['reading'];
+          _odometerError = Validators.validateOdometer(result['reading']);
+        }
+      });
+    }
   }
 
   List<Widget> _buildDynamicTechnicianAssignments() {
+    // Group technicians by role
+    final Map<String, List<Map<String, dynamic>>> techsByRole = {};
+    for (var tech in _allTechnicians) {
+      final role = tech['role']?.toString() ?? 'Unassigned';
+      techsByRole.putIfAbsent(role, () => []).add(tech);
+    }
+
     List<Widget> widgets = [];
-    for (int i = 0; i < _technicianAssignments.length; i++) {
-      var assignment = _technicianAssignments[i];
-      
-      // Get IDs of technicians already assigned in OTHER slots
-      final assignedTechIds = _technicianAssignments
-          .where((a) => a != assignment && a['tech_id'] != null)
-          .map((a) => a['tech_id'])
-          .toSet();
-
-      // Filter available techs for the selected role AND exclude already assigned ones
-      var availableTechs = _allTechnicians.where((t) {
-        return t['role'] == assignment['role'] && !assignedTechIds.contains(t['id']);
-      }).toList();
-
+    techsByRole.forEach((role, techs) {
       widgets.add(
         Padding(
           padding: const EdgeInsets.only(bottom: 16),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Role Dropdown
-              Expanded(
-                flex: 1,
-                child: DropdownButtonFormField<String>(
-                  decoration: const InputDecoration(
-                    labelText: 'Tech Type',
-                    isDense: true,
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: assignment['role'],
-                  isExpanded: true, // Fixes RenderFlex overflow
-                  items: AppConstants.techRoles.map((role) {
-                    String displayRole = role.replaceAll('_', ' ');
-                    displayRole = displayRole[0].toUpperCase() + displayRole.substring(1);
-                    return DropdownMenuItem<String>(
-                      value: role,
-                      child: Text(displayRole, style: const TextStyle(fontSize: 13)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      assignment['role'] = value;
-                      assignment['tech_id'] = null; // Reset selected tech
-                    });
-                  },
+              Text(
+                role.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textSecondary,
                 ),
               ),
-              const SizedBox(width: 8),
-              // Tech Dropdown
-              Expanded(
-                flex: 1,
-                child: DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(
-                    labelText: 'Technician',
-                    isDense: true,
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: assignment['tech_id'],
-                  items: availableTechs.map((tech) {
-                    return DropdownMenuItem<int>(
-                      value: tech['id'] as int,
-                      child: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 13)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
+              const SizedBox(height: 8),
+              ...techs.map((tech) {
+                final isSelected = _technicianAssignments.any((a) => a['tech_id'] == tech['id']);
+                return CheckboxListTile(
+                  title: Text(tech['username'] ?? 'Unknown', style: const TextStyle(fontSize: 14)),
+                  value: isSelected,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (bool? checked) {
                     setState(() {
-                      assignment['tech_id'] = value;
+                      if (checked == true) {
+                        _technicianAssignments.add({'role': role, 'tech_id': tech['id']});
+                      } else {
+                        _technicianAssignments.removeWhere((a) => a['tech_id'] == tech['id']);
+                      }
                     });
                   },
-                  isExpanded: true,
-                ),
-              ),
-              // Delete Button
-              IconButton(
-                icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                onPressed: () {
-                  setState(() {
-                    _technicianAssignments.removeAt(i);
-                  });
-                },
-              ),
+                );
+              }).toList(),
             ],
           ),
         ),
       );
+    });
+
+    if (widgets.isEmpty) {
+      return [const Padding(padding: EdgeInsets.only(bottom: 16), child: Text('No technicians available.'))];
     }
     return widgets;
   }
@@ -1590,6 +1555,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
         child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          controller: _mainScrollController,
           padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2002,12 +1969,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const FormLabel(text: 'Vehicle Name'),
-                  TextField(
-                    controller: _newVehicleNameController,
-                    decoration: const InputDecoration(hintText: 'e.g., Swift VXI'),
-                  ),
-                  const SizedBox(height: 16),
                 ],
               );
             },
@@ -2226,67 +2187,220 @@ class _JobCardScreenState extends State<JobCardScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _labourChargeController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Labour Charge (₹)',
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.handyman, size: 18),
+            ),
+            onChanged: (val) => _syncLabourCharge(),
+          ),
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre Specification (Applies to all)'),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Brand',
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-                  ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: _selectedGlobalTyreBrand,
-                  items: () {
-                    final brands = _tyreCatalog.map((t) => t['brand'].toString()).toSet().toList();
+                child: InkWell(
+                  onTap: () async {
+                    final brands = _tyreCatalog.map((t) => t['brand'].toString().toUpperCase()).toSet().toList();
                     brands.sort();
-                    return brands.map((brand) => DropdownMenuItem(
-                      value: brand,
-                      child: Text(brand, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                    )).toList();
-                  }(),
-                  onChanged: (val) {
-                    setState(() {
-                      _selectedGlobalTyreBrand = val;
-                      _selectedGlobalTyreModel = null;
-                    });
+                    final selected = await _showSearchableDropdown('Select Brand', brands);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreBrand = selected;
+                        _selectedGlobalTyreModel = null;
+                        _selectedGlobalTyreSize = null;
+                        _selectedGlobalTyreLiSi = null;
+                        _syncTyreComplaint();
+                      });
+                    }
                   },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Brand',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreBrand ?? 'Select Brand', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: DropdownButtonFormField<String>(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreBrand == null ? null : () async {
+                    final models = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand)
+                        .map((t) => t['model'].toString()).toSet().toList();
+                    models.sort();
+                    final selected = await _showSearchableDropdown('Select Model/Pattern', models);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreModel = selected;
+                        _selectedGlobalTyreSize = null;
+                        _selectedGlobalTyreLiSi = null;
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Model/Pattern',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreModel ?? 'Select Model', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreModel == null ? null : () async {
+                    final sizes = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel)
+                        .map((t) => t['size'].toString()).toSet().toList();
+                    sizes.sort();
+                    final selected = await _showSearchableDropdown('Select Size', sizes);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreSize = selected;
+                        _selectedGlobalTyreLiSi = null;
+                        
+                        // Check if LI/SI can be auto-selected
+                        final liSis = _tyreCatalog
+                          .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == selected)
+                          .map((t) => t['li_si']?.toString() ?? '')
+                          .where((liSi) => liSi.isNotEmpty)
+                          .toSet()
+                          .toList();
+                          
+                        if (liSis.length == 1) {
+                          _selectedGlobalTyreLiSi = liSis.first;
+                          final matchedTyre = _tyreCatalog.firstWhere(
+                            (t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == selected && t['li_si'].toString() == _selectedGlobalTyreLiSi,
+                            orElse: () => {},
+                          );
+                          if (matchedTyre.isNotEmpty && matchedTyre['billing_price'] != null) {
+                            _tyrePriceController.text = matchedTyre['billing_price'].toString();
+                          }
+                        } else {
+                          _tyrePriceController.clear();
+                        }
+                        
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Size',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreSize ?? 'Select Size', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InkWell(
+                  onTap: _selectedGlobalTyreSize == null ? null : () async {
+                    final liSis = _tyreCatalog
+                        .where((t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == _selectedGlobalTyreSize)
+                        .map((t) => t['li_si']?.toString() ?? '')
+                        .where((liSi) => liSi.isNotEmpty)
+                        .toSet().toList();
+                    liSis.sort();
+                    final selected = await _showSearchableDropdown('Select LI/SI', liSis);
+                    if (selected != null) {
+                      setState(() {
+                        _selectedGlobalTyreLiSi = selected;
+                        
+                        // Autofill price
+                        final matchedTyre = _tyreCatalog.firstWhere(
+                          (t) => t['brand'].toString().toUpperCase() == _selectedGlobalTyreBrand && t['model'].toString() == _selectedGlobalTyreModel && t['size'].toString() == _selectedGlobalTyreSize && t['li_si'].toString() == selected,
+                          orElse: () => {},
+                        );
+                        if (matchedTyre.isNotEmpty && matchedTyre['billing_price'] != null) {
+                          _tyrePriceController.text = matchedTyre['billing_price'].toString();
+                        }
+                        
+                        _syncTyreComplaint();
+                      });
+                    }
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'LI/SI',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(_selectedGlobalTyreLiSi ?? 'Select LI/SI', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _tyreCountController,
+                  keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Model/Size',
+                    labelText: 'Tyre Count',
                     isDense: true,
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
                   ),
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                  value: _selectedGlobalTyreModel,
-                  isExpanded: true,
-                  items: _selectedGlobalTyreBrand == null
-                      ? []
-                      : () {
-                          final models = _tyreCatalog
-                              .where((t) => t['brand'] == _selectedGlobalTyreBrand)
-                              .map((t) => '${t['model']} ${t['size']}').toSet().toList();
-                          models.sort();
-                          return models.map((model) => DropdownMenuItem(
-                            value: model,
-                            child: Text(model, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                          )).toList();
-                        }(),
-                  onChanged: _selectedGlobalTyreBrand == null
-                      ? null
-                      : (val) {
-                          setState(() {
-                            _selectedGlobalTyreModel = val;
-                          });
-                        },
+                  onChanged: (val) => _syncTyreComplaint(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _tyrePriceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Price/Tyre',
+                    prefixText: '₹',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (val) => _syncTyreComplaint(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _tyreTotalController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Total',
+                    prefixText: '₹',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: Colors.black12,
+                  ),
                 ),
               ),
             ],
@@ -2464,7 +2578,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
             crossAxisSpacing: 8,
             children: _requiredWheels.map<Widget>((wheel) {
               final file = _wheelPhotos[wheel];
-              return _buildPhotoSlot(wheel, file, () => _captureWheelPhoto(wheel), () => _removeWheelPhoto(wheel));
+              return _buildPhotoSlot(wheel, file, () => _pickWheelPhoto(wheel), () => _removeWheelPhoto(wheel));
             }).toList(),
           ),
           const SizedBox(height: 16),
@@ -2473,7 +2587,27 @@ class _JobCardScreenState extends State<JobCardScreen> {
           Row(
             children: [
               Expanded(
-                child: _buildPhotoSlot('Vehicle', _vehiclePhoto, _captureVehiclePhoto, _removeVehiclePhoto),
+                child: SizedBox(
+                  height: 120, // Match the typical height of an aspect ratio 1 box
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _vehiclePhotos.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == _vehiclePhotos.length) {
+                        return Container(
+                          width: 120,
+                          margin: const EdgeInsets.only(right: 8),
+                          child: _buildPhotoSlot('Add Photo', null, _pickVehiclePhoto, () {}),
+                        );
+                      }
+                      return Container(
+                        width: 120,
+                        margin: const EdgeInsets.only(right: 8),
+                        child: _buildPhotoSlot('Vehicle ${index + 1}', _vehiclePhotos[index], () {}, () => _removeVehiclePhoto(index)),
+                      );
+                    },
+                  ),
+                ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -2588,41 +2722,25 @@ class _JobCardScreenState extends State<JobCardScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: file != null ? Colors.green : Colors.grey.shade300),
                 ),
-                child: file != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: kIsWeb
-                            ? Image.network(file.path, fit: BoxFit.cover)
-                            : Image.file(File(file.path), fit: BoxFit.cover),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt, color: Colors.grey.shade400, size: 32),
-                          const SizedBox(height: 4),
-                          Text(title, textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                        ],
-                      ),
               ),
-            ),
-            if (file != null)
-              Positioned(
-                top: 4,
-                right: 4,
-                child: GestureDetector(
-                  onTap: onRemove,
-                  child: Container(
-                    decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
-                    padding: const EdgeInsets.all(4),
-                    child: const Icon(Icons.close, color: Colors.white, size: 16),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
+                    icon: const Icon(Icons.add_task, size: 20),
+                    label: const FittedBox(fit: BoxFit.scaleDown, child: Text('Create Job Card')),
                   ),
                 ),
               ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
+
 }
 
 // Custom Painter for drawing damage marks

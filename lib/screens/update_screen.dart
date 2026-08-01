@@ -52,6 +52,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   // ✅ FIX: Local loading state for form submissions
   bool _isSubmitting = false;
 
+  bool _isSearchingMain = false;
+  final TextEditingController _mainSearchController = TextEditingController();
+
   // ✅ NEW: Wash integration
   bool _washRequired = true;
   String _currentStatus = '';
@@ -249,6 +252,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
   @override
   void dispose() {
+    _mainSearchController.dispose();
     _tabController.dispose();
     _overdueCheckTimer?.cancel();
     _suggestionTextController.dispose();
@@ -550,8 +554,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           _currentCustomerFeedbackAudio = response['customer_feedback_audio'] as String?;
           _currentCustomerFeedbackText = response['customer_feedback_text'] as String?;
           _isFeedbackAudioPlaying = false;
+          _isFeedbackAudioPlaying = false;
           _showUpdateForm = true;
         });
+
+        // Close the pushed screen so the user can see the details underneath
+        if (sourceTab == 'Completed Jobs' || sourceTab == 'Cancelled Jobs') {
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       _showError('Could not load job details: ${e.toString()}');
@@ -845,7 +855,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     }
 
     // ✅ Determine target tab for navigation
-    const int targetTabIndex = 2; // Always Awaiting
+    const int targetTabIndex = 0; // Default to Work in Progress
 
     // Prepare data with materials
     final updatedComplaints = _originalComplaints.asMap().entries.map((entry) {
@@ -965,7 +975,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       return;
     }
 
-    const int targetTabIndex = 2; // Always Awaiting
+    const int targetTabIndex = 0; // Default to Work in Progress
 
     final updatedComplaints = _originalComplaints.asMap().entries.map((entry) {
       final index = entry.key;
@@ -1428,8 +1438,13 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       for (final entry in barcodeData.entries) {
         final position = entry.key;
         final details = entry.value as Map<String, dynamic>;
-        final hasImage = details['has_image'] == 'true';
+        final qrString = details['qr']?.toString() ?? '';
+        final hasImage = details['has_image']?.toString() == 'true';
         final spec = details['spec']?.toString() ?? '';
+
+        if (qrString.isEmpty && !hasImage) {
+          continue; // Skip tires that don't have a QR scanned
+        }
 
         Uint8List? imageBytes;
         if (hasImage && _jobMediaUrls.isNotEmpty) {
@@ -1572,11 +1587,15 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             .toList();
             
         final workInProgressJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusWorkInProgress)
+            .where((r) => r['status'] == AppConstants.statusWorkInProgress && matchesSearch(r))
             .toList();
             
         final completedJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusCompleted)
+            .where((r) => r['status'] == AppConstants.statusCompleted && matchesSearch(r))
+            .toList();
+            
+        final cancelledJobs = allReports
+            .where((r) => r['status'] == AppConstants.statusCancelled && matchesSearch(r))
             .toList();
             
         final cancelledJobs = allReports
@@ -1594,34 +1613,102 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     onPressed: () => Navigator.of(context).pop(),
                   )
                 : null,
-            title: const Text(
-              'Job Cards',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 24,
-                color: AppTheme.primaryColor,
-              ),
-            ),
+            title: _isSearchingMain
+                ? TextField(
+                    controller: _mainSearchController,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      hintText: 'Search Vehicle No...',
+                      border: InputBorder.none,
+                      hintStyle: TextStyle(color: Colors.black38),
+                    ),
+                    style: const TextStyle(color: AppTheme.primaryColor),
+                    onChanged: (_) => setState(() {}),
+                  )
+                : const Text(
+                    'Job Cards',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 24,
+                      color: AppTheme.primaryColor,
+                    ),
+                  ),
             backgroundColor: Colors.white,
             elevation: 0,
             centerTitle: true,
             actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded, color: AppTheme.primaryColor),
-                onPressed: _refreshData,
-                tooltip: 'Refresh Data',
+              if (_isSearchingMain)
+                IconButton(
+                  icon: const Icon(Icons.close, color: AppTheme.primaryColor),
+                  onPressed: () {
+                    setState(() {
+                      _isSearchingMain = false;
+                      _mainSearchController.clear();
+                    });
+                  },
+                ),
+              if (!_isSearchingMain)
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, color: AppTheme.primaryColor),
+                  onPressed: _refreshData,
+                  tooltip: 'Refresh Data',
+                ),
+              if (!_isSearchingMain)
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, color: AppTheme.primaryColor),
+                  onSelected: (value) {
+                    if (value == 'search') {
+                      setState(() { _isSearchingMain = true; });
+                    } else if (value == 'completed') {
+                      _navigateToJobsScreen('Completed Jobs', AppConstants.statusCompleted);
+                    } else if (value == 'cancelled') {
+                      _navigateToJobsScreen('Cancelled Jobs', AppConstants.statusCancelled);
+                    }
+                  },
+                  itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                    const PopupMenuItem<String>(
+                      value: 'search',
+                      child: Row(
+                        children: [
+                          Icon(Icons.search, color: Colors.blue, size: 20),
+                          SizedBox(width: 8),
+                          Text('Search'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem<String>(
+                      value: 'completed',
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                        SizedBox(width: 8),
+                        Text('Completed Jobs'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem<String>(
+                    value: 'cancelled',
+                    child: Row(
+                      children: [
+                        Icon(Icons.cancel_outlined, color: Colors.red, size: 20),
+                        SizedBox(width: 8),
+                        Text('Cancelled Jobs'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           body: Column(
             children: [
+
               Container(
                 color: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
                 child: Consumer<AdminSettingsProvider>(
                   builder: (context, adminSettings, _) {
                     List<Widget> tabs = [];
-                    
                     tabs.addAll([
                       _buildProfessionalTab('Drafts', draftJobs.length),
                       _buildProfessionalTab('Jobs', pendingJobs.length),
@@ -1644,9 +1731,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
-                      isScrollable: true,
-                      tabAlignment: TabAlignment.start,
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      isScrollable: false,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
                       tabs: tabs,
                     );
                   },
@@ -1705,29 +1791,101 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   Tab _buildProfessionalTab(String title, int count) {
     return Tab(
       height: 48,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(title),
-          if (count > 0) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '($count)',
-                style: TextStyle(
-                  color: AppTheme.primaryColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title),
+            if (count > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '($count)',
+                  style: TextStyle(
+                    color: AppTheme.primaryColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
+      ),
+    );
+  }
+  void _navigateToJobsScreen(String title, String status) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) {
+          bool isSearching = false;
+          final searchController = TextEditingController();
+          
+          return StatefulBuilder(
+            builder: (context, setStateLocal) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: isSearching 
+                      ? TextField(
+                          controller: searchController,
+                          autofocus: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Search by Vehicle No...',
+                            border: InputBorder.none,
+                          ),
+                          onChanged: (_) => setStateLocal(() {}),
+                        )
+                      : Text(title),
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppTheme.primaryColor,
+                  elevation: 1,
+                  actions: [
+                    if (isSearching)
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          setStateLocal(() {
+                            isSearching = false;
+                            searchController.clear();
+                          });
+                        },
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () {
+                          setStateLocal(() {
+                            isSearching = true;
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                body: SafeArea(
+                  child: Consumer<ReportProvider>(
+                    builder: (context, reportProvider, _) {
+                      final q = searchController.text.toLowerCase();
+                      final jobs = reportProvider.reports.where((r) {
+                        if (r['status'] != status) return false;
+                        if (q.isEmpty) return true;
+                        final v = r['vehicles']?['Vehicle Number']?.toString().toLowerCase() ?? '';
+                        return v.contains(q);
+                      }).toList();
+                      return _buildJobList(jobs, 'No $title found.', title);
+                    },
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -1901,11 +2059,11 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                     )
                                   else if (suggestedList.isNotEmpty && job['status'] == AppConstants.statusNotStarted)
                                     const Text(
-                                      'Draft Saved',
+                                      'Draft',
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
-                                        color: Color(0xFF6B7280), // Gray for draft
+                                        color: Color(0xFF6B7280),
                                       ),
                                     ),
                                   
@@ -2579,7 +2737,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
                           // ✅ ADD: Switch to Pending tab and show success
                           if (context.mounted) {
-                            _tabController.animateTo(1); // Switch to Pending tab
+                            _tabController.animateTo(0); // Switch to Work in Progress tab
                             // Commented out to reduce UI noise
                             // ScaffoldMessenger.of(context).showSnackBar(
                             //   const SnackBar(
@@ -2639,6 +2797,19 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       debugPrint('Form visible: $_showUpdateForm');
       debugPrint('---------------------------------------');
     }
+    bool hasQr = false;
+    try {
+      final String combinedBarcode = _scannedBarcodeText ?? _barcodeController.text;
+      if (combinedBarcode.isNotEmpty && combinedBarcode.startsWith('{')) {
+        final Map<String, dynamic> barcodeData = jsonDecode(combinedBarcode);
+        hasQr = barcodeData.values.any((details) {
+          if (details is Map) {
+            return details['qr']?.toString().isNotEmpty == true || details['has_image']?.toString() == 'true';
+          }
+          return false;
+        });
+      }
+    } catch (_) {}
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -2657,8 +2828,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           tooltip: 'Close Form',
         ),
         actions: [
-          if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText!.startsWith('{')) || 
-              (_barcodeController.text.isNotEmpty && _barcodeController.text.startsWith('{')))
+          if (hasQr)
             IconButton(
               icon: const Icon(Icons.share, color: AppTheme.primaryColor),
               onPressed: _shareWarrantyPDF,
@@ -3213,7 +3383,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         const SizedBox(width: 12),
                         const Expanded(
                           child: Text(
-                            'Customer Complaints',
+                            'Works',
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
@@ -3273,13 +3443,29 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
-                                  child: Text(
-                                    complaint['text'],
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14,
-                                      color: AppTheme.textPrimary,
-                                    ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        complaint['text'],
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 14,
+                                          color: AppTheme.textPrimary,
+                                        ),
+                                      ),
+                                      if (complaint['category'] != null && complaint['category'].toString().isNotEmpty) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          complaint['category'],
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.blueGrey,
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                                 const SizedBox(width: 12),
@@ -3383,17 +3569,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                               ),
                               const SizedBox(height: 8),
                             ],
-                            
-                            // Add Material Input with Searchable Dropdown
-                            if (isEditable)
-                              MaterialSearchDropdown(
-                                hintText: 'Search and select material',
-                                onMaterialSelected: (materialName) {
-                                  setState(() {
-                                    _itemMaterials[complaintKey]!.add(materialName);
-                                  });
-                                },
-                              ),
                           ],
                         ),
                       );
@@ -3598,24 +3773,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                               ),
                               const SizedBox(height: 12),
                               
-                              // Materials Section
-                              Row(
-                                children: [
-                                  const Icon(Icons.inventory_2_outlined, size: 16, color: Color(0xFF6B7280)),
-                                  const SizedBox(width: 6),
-                                  const Text(
-                                    'Materials',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              
-                              // Materials List
+                              // Materials Section Label Removed
+                              // if (_itemMaterials[itemKey]!.isNotEmpty) ...
                               if (_itemMaterials[itemKey]!.isNotEmpty) ...[
                                 Wrap(
                                   spacing: 6,
@@ -3907,8 +4066,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             padding: EdgeInsets.only(bottom: 8.0),
                             child: Text('Scanned Barcode', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           ),
-                          if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty) || _scannedBarcodeImageUrl != null) ...[
-                            if (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty)
+                          if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText != '{}') || _scannedBarcodeImageUrl != null) ...[
+                            if (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText != '{}')
                               _buildBarcodeContent(_scannedBarcodeText!),
                             if (_scannedBarcodeImageUrl != null)
                               Padding(
@@ -3956,7 +4115,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                               ),
                             const Divider(),
                             const SizedBox(height: 8),
-                          ] else if (_barcodeController.text.isNotEmpty) ...[
+                          ] else if (_barcodeController.text.isNotEmpty && _barcodeController.text != '{}') ...[
                             _buildBarcodeContent(_barcodeController.text),
                             if (_newBarcodeImageBytes != null)
                               Padding(
@@ -3973,7 +4132,13 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                               ),
                             const Divider(),
                             const SizedBox(height: 8),
-                          ] else if (isEditable) ...[
+                          ] else ...[
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 16.0),
+                              child: Text('no qr/barcode scanned', style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
+                            ),
+                          ],
+                          if (isEditable && (_scannedBarcodeText == null || _scannedBarcodeText!.isEmpty || _scannedBarcodeText == '{}') && _scannedBarcodeImageUrl == null && _barcodeController.text.isEmpty && _barcodeController.text != '{}') ...[
                             Padding(
                               padding: const EdgeInsets.only(bottom: 16),
                               child: InkWell(
@@ -4005,7 +4170,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             ),
                             const Divider(),
                             const SizedBox(height: 8),
-                          ] else ...[
+                          ] else if ((_scannedBarcodeText == null || _scannedBarcodeText!.isEmpty || _scannedBarcodeText == '{}') && _scannedBarcodeImageUrl == null && _barcodeController.text.isEmpty && _barcodeController.text != '{}') ...[
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                               margin: const EdgeInsets.only(bottom: 16),
@@ -4037,7 +4202,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             Builder(
                               builder: (context) {
                                 final qrUrls = _jobMediaUrls.where((url) => url.contains('_tyreqr_')).toList();
-                                final otherUrls = _jobMediaUrls.where((url) => !url.contains('_tyreqr_')).toList();
+                                final wheelUrls = _jobMediaUrls.where((url) => url.contains('_wheel_')).toList();
+                                final vehicleUrls = _jobMediaUrls.where((url) => url.contains('_vehicle_')).toList();
+                                final odometerUrls = _jobMediaUrls.where((url) => url.contains('_odometer_')).toList();
+                                final otherUrls = _jobMediaUrls.where((url) => !url.contains('_tyreqr_') && !url.contains('_wheel_') && !url.contains('_vehicle_') && !url.contains('_odometer_') && !url.contains('_barcode_')).toList();
                                 
                                 return Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -4054,10 +4222,46 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       ),
                                       const SizedBox(height: 16),
                                     ],
+                                    if (wheelUrls.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8.0),
+                                        child: Text('Wheel Images', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      ),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: wheelUrls.map((url) => _buildImageThumbnail(url)).toList(),
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
+                                    if (vehicleUrls.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8.0),
+                                        child: Text('Vehicle Overall Photos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      ),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: vehicleUrls.map((url) => _buildImageThumbnail(url)).toList(),
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
+                                    if (odometerUrls.isNotEmpty) ...[
+                                      const Padding(
+                                        padding: EdgeInsets.only(bottom: 8.0),
+                                        child: Text('Odometer Image', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      ),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: odometerUrls.map((url) => _buildImageThumbnail(url)).toList(),
+                                      ),
+                                      const SizedBox(height: 16),
+                                    ],
                                     if (otherUrls.isNotEmpty) ...[
                                       Padding(
                                         padding: const EdgeInsets.only(bottom: 8.0),
-                                        child: Text(_openedFromTab == 'Completed' && _afterJobMediaUrls.isNotEmpty ? 'Before Job Pictures' : 'Vehicle & Wheel Photos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                        child: Text(_openedFromTab == 'Completed Jobs' && _afterJobMediaUrls.isNotEmpty ? 'Before Job Pictures' : 'Other Photos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
                                       Wrap(
                                         spacing: 8,
@@ -4226,27 +4430,6 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               ),
             ),
             const SizedBox(height: AppTheme.spacingSm), // Smaller gap
-            // Material Input Row
-            // Row(
-            //   children: [
-            //     // Expanded(
-            //     //   child: TextField(
-            //     //     controller: _materialControllers[itemText],
-            //     //     decoration: InputDecoration(
-            //     //       hintText: 'Add material needed (e.g., Oil Filter)',
-            //     //       isDense: true,
-            //     //       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), // Adjust padding
-            //     //     ),
-            //     //     onSubmitted: (_) => _addMaterial(itemText),
-            //     //   ),
-            //     // ),
-            //     IconButton(
-            //       icon: const Icon(Icons.add_circle, color: AppTheme.primaryColor),
-            //       onPressed: () => _addMaterial(itemText),
-            //       tooltip: 'Add Material', // Add tooltip
-            //     ),
-            //   ],
-            // ),
             // Material Chips using Wrap
             if (materials.isNotEmpty) ...[
               const SizedBox(height: AppTheme.spacingMd),
@@ -4332,12 +4515,21 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     }
 
     if (isJson) {
+      final validEntries = barcodeData.entries.where((entry) {
+        final details = entry.value as Map<String, dynamic>;
+        final qr = details['qr']?.toString() ?? '';
+        final hasImage = details['has_image']?.toString() == 'true';
+        return qr.isNotEmpty || hasImage;
+      }).toList();
+
+      if (validEntries.isEmpty) return const SizedBox.shrink();
+
       return Padding(
         padding: const EdgeInsets.only(bottom: 16.0),
         child: Wrap(
           spacing: 16.0,
           runSpacing: 20.0,
-          children: barcodeData.entries.map((entry) {
+          children: validEntries.map((entry) {
             final position = entry.key;
             final details = entry.value as Map<String, dynamic>;
             final qr = details['qr']?.toString() ?? '';
@@ -4380,7 +4572,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         version: QrVersions.auto,
                         size: 130.0,
                       ),
-                    ),
+                    )
+                  else
+                    // Placeholder if no string QR but has image (already shown in Tyre QR photos section)
+                    const SizedBox.shrink(),
                 ],
               ),
             );

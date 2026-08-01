@@ -59,6 +59,7 @@ class _BrandModelSearchDropdownState extends State<BrandModelSearchDropdown> {
   Future<void> _loadAllModels() async {
     try {
       final models = await _supabaseService.getAllVehicleModels();
+      models.sort((a, b) => (a['Model name'] as String).toLowerCase().compareTo((b['Model name'] as String).toLowerCase()));
       if (mounted) {
         setState(() {
           _allModels = models;

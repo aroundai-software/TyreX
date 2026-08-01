@@ -157,7 +157,7 @@ Deno.serve(async (_req) => {
     const { data: admins } = await supabase
       .from('users')
       .select('fcm_token')
-      .eq('role', 'Admin')
+      .eq('role', 'admin')
       .not('fcm_token', 'is', null)
 
     const adminTokens: string[] = (admins ?? [])

@@ -15,6 +15,7 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../screens/custom_scanner_screen.dart';
 import '../screens/multi_wheel_camera_screen.dart';
+import '../screens/unlimited_camera_screen.dart';
 import '../screens/number_plate_scanner_screen.dart';
 import '../screens/odometer_camera_screen.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -23,6 +24,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:archive/archive.dart';
 import '../utils/app_constants.dart';
 import '../utils/validators.dart';
+import '../utils/date_utils.dart';
+import 'package:intl/intl.dart';
 import '../widgets/service_catalog_picker.dart';
 import '../utils/vehicle_number_utils.dart';
 import '../widgets/error_display.dart';
@@ -46,12 +49,14 @@ class JobCardScreen extends StatefulWidget {
   final int? bookingId;
   final String? customerName;
   final String? customerPhone;
+  final Map<String, dynamic>? draftJob;
   
   const JobCardScreen({
     super.key,
     this.bookingId,
     this.customerName,
     this.customerPhone,
+    this.draftJob,
   });
 
   @override
@@ -95,12 +100,195 @@ class _JobCardScreenState extends State<JobCardScreen> {
   String? _searchError;
   Map<String, dynamic>? _vehicleDetails;
   bool _showCreateVehicleForm = false;
+  // ✅ True when the screen is loaded from a vehicle job card draft (existing vehicle)
+  // Used to skip the vehicle search bar and creation form entirely
+  bool _isVehicleJobCardDraft = false;
+  dynamic _loadedRegistrationDraftId;
   int? _currentVehicleId;
   int? _lastKnownOdometer;
 
   // ✅ Add flags to track if details differ
   bool _clientNameDiffers = false;
   bool _clientPhoneDiffers = false;
+
+  // Courier State
+  bool _isCourierMode = false;
+  final _courierNameController = TextEditingController();
+  final _courierPhoneController = TextEditingController();
+  final _courierAddressController = TextEditingController();
+  final _courierGstController = TextEditingController();
+  final List<XFile> _courierPhotos = [];
+  String? _courierTyreBrand;
+  String? _courierTyreModel;
+  String? _courierTyreSize;
+  
+  final _courierProductPriceController = TextEditingController();
+  final _courierProductQtyController = TextEditingController(text: '1');
+  final List<Map<String, dynamic>> _courierProductsList = [];
+  int? _editingCourierProductIndex;
+
+  void _addCourierProduct() {
+    if (_courierTyreBrand == null || _courierTyreModel == null || _courierTyreSize == null) {
+      _showErrorSnackBar('Please select Brand, Model, and Size.');
+      return;
+    }
+    
+    final price = double.tryParse(_courierProductPriceController.text) ?? 0.0;
+    final qty = int.tryParse(_courierProductQtyController.text) ?? 1;
+
+    setState(() {
+      if (_editingCourierProductIndex != null) {
+        final existingImages = _courierProductsList[_editingCourierProductIndex!]['qr_images'] as List<Uint8List>? ?? [];
+        _courierProductsList[_editingCourierProductIndex!] = {
+          'brand': _courierTyreBrand,
+          'model': _courierTyreModel,
+          'size': _courierTyreSize,
+          'name': '$_courierTyreBrand $_courierTyreModel - $_courierTyreSize',
+          'price': price,
+          'qty': qty,
+          'qr_images': existingImages, 
+        };
+        _editingCourierProductIndex = null;
+      } else {
+        int existingIndex = _courierProductsList.indexWhere((p) => 
+          p['brand'] == _courierTyreBrand && 
+          p['model'] == _courierTyreModel && 
+          p['size'] == _courierTyreSize
+        );
+
+        if (existingIndex != -1) {
+          _courierProductsList[existingIndex]['qty'] = (_courierProductsList[existingIndex]['qty'] as int) + qty;
+          _courierProductsList[existingIndex]['price'] = price; 
+        } else {
+          _courierProductsList.add({
+            'brand': _courierTyreBrand,
+            'model': _courierTyreModel,
+            'size': _courierTyreSize,
+            'name': '$_courierTyreBrand $_courierTyreModel - $_courierTyreSize',
+            'price': price,
+            'qty': qty,
+            'qr_images': <Uint8List>[], 
+          });
+        }
+      }
+      
+      _courierTyreBrand = null;
+      _courierTyreModel = null;
+      _courierTyreSize = null;
+      _courierProductPriceController.clear();
+      _courierProductQtyController.text = '1';
+    });
+  }
+
+  void _deleteCourierProduct(int index) {
+    setState(() {
+      _courierProductsList.removeAt(index);
+    });
+  }
+
+  void _editCourierProduct(int index) {
+    final p = _courierProductsList[index];
+    setState(() {
+      _courierTyreBrand = p['brand'];
+      _courierTyreModel = p['model'];
+      _courierTyreSize = p['size'];
+      _courierProductQtyController.text = p['qty'].toString();
+      _courierProductPriceController.text = p['price'].toString();
+      _editingCourierProductIndex = index;
+    });
+  }
+
+  void _cancelEditCourierProduct() {
+    setState(() {
+      _editingCourierProductIndex = null;
+      _courierTyreBrand = null;
+      _courierTyreModel = null;
+      _courierTyreSize = null;
+      _courierProductPriceController.clear();
+      _courierProductQtyController.text = '1';
+    });
+  }
+
+  Future<void> _scanCourierProductQR(int index) async {
+    final qty = _courierProductsList[index]['qty'] as int;
+    final currentPhotos = _courierProductsList[index]['qr_images'] as List<Uint8List>? ?? [];
+    
+    int remaining = qty - currentPhotos.length;
+    if (remaining <= 0) {
+      _showErrorSnackBar('You have already scanned all QRs for this product.');
+      return;
+    }
+
+    final List<String> targets = List.generate(remaining, (i) => 'QR Code ${i + 1} of $remaining');
+    
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MultiWheelCameraScreen(targets: targets),
+      ),
+    );
+
+    if (result != null && result is Map) {
+      List<Uint8List> images = List<Uint8List>.from(currentPhotos);
+      for (var file in result.values) {
+        try {
+          images.add(await file.readAsBytes());
+        } catch (e) {
+          debugPrint('Error reading QR file: $e');
+        }
+      }
+      setState(() {
+        _courierProductsList[index]['qr_images'] = images;
+      });
+    }
+  }
+
+  void _viewCourierQR(int productIndex, int photoIndex) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final images = _courierProductsList[productIndex]['qr_images'] as List<Uint8List>;
+        final imageBytes = images[photoIndex];
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                alignment: Alignment.topRight,
+                children: [
+                  InteractiveViewer(
+                    child: Image.memory(imageBytes, fit: BoxFit.contain),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    images.removeAt(photoIndex);
+                  });
+                  Navigator.pop(context);
+                  _scanCourierProductQR(productIndex); 
+                },
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete & Retake'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   // -------------------
   // Sharing Helpers
@@ -226,6 +414,156 @@ class _JobCardScreenState extends State<JobCardScreen> {
     if (widget.customerPhone != null) {
       _newClientPhoneController.text = widget.customerPhone!;
     }
+    
+    if (widget.draftJob != null) {
+      final marksRaw = widget.draftJob!['marks'];
+      Map<String, dynamic> marks = {};
+      if (marksRaw != null) {
+        if (marksRaw is String) {
+          try { marks = jsonDecode(marksRaw); } catch (_) {}
+        } else if (marksRaw is Map) {
+          marks = Map<String, dynamic>.from(marksRaw);
+        }
+      }
+      
+      final bool isCourier = marks['is_courier'] == true;
+      _isCourierMode = isCourier;
+
+      if (isCourier) {
+        _courierNameController.text = widget.draftJob!['Owner name'] ?? '';
+        _courierPhoneController.text = widget.draftJob!['client_phone'] ?? '';
+        _courierAddressController.text = marks['address'] ?? '';
+        _courierGstController.text = marks['gst_no'] ?? '';
+        
+        final productsList = marks['products'];
+        if (productsList != null && productsList is List) {
+          _courierProductsList.clear();
+          for (var p in productsList) {
+            _courierProductsList.add({
+              'brand': p['brand'],
+              'model': p['model'],
+              'size': p['size'],
+              'name': p['name'],
+              'price': double.tryParse(p['price'].toString()) ?? 0.0,
+              'qty': p['qty'],
+              'qr_images': <Uint8List>[],
+            });
+          }
+        }
+      } else {
+        // ✅ It's a vehicle job card draft — mark it so UI hides search+create form
+        _isVehicleJobCardDraft = true;
+        _loadDraftIntoForm(widget.draftJob!, showSnackBar: false);
+      }
+      
+      _loadDraftMedia(widget.draftJob!);
+    }
+  }
+
+  Future<void> _loadDraftMedia(Map<String, dynamic> draftJob) async {
+    final photoUrlsRaw = draftJob['photo_urls'];
+    if (photoUrlsRaw == null) return;
+    
+    List<String> urls = [];
+    if (photoUrlsRaw is String) {
+      try { urls = List<String>.from(jsonDecode(photoUrlsRaw)); } catch (_) {}
+    } else if (photoUrlsRaw is List) {
+      urls = List<String>.from(photoUrlsRaw.map((e) => e.toString()));
+    }
+    
+    final dir = await getTemporaryDirectory();
+
+    for (String url in urls) {
+      try {
+        final response = await http.get(Uri.parse(url));
+        if (response.statusCode != 200) continue;
+        final bytes = response.bodyBytes;
+        final ts = DateTime.now().millisecondsSinceEpoch;
+
+        // ─────────────── COURIER MEDIA ───────────────
+        if (url.contains('_tyreqr_product_')) {
+          // Format: job_{id}_tyreqr_product_{i}_qr_{j}_{timestamp}.jpg
+          final match = RegExp(r'product_(\d+)_qr_(\d+)').firstMatch(url);
+          if (match != null) {
+            final productIndex = int.parse(match.group(1)!);
+            if (productIndex < _courierProductsList.length) {
+              if (mounted) {
+                setState(() {
+                  (_courierProductsList[productIndex]['qr_images'] as List<Uint8List>).add(bytes);
+                });
+              }
+            }
+          }
+
+        // ─────────────── VEHICLE TYRE QR IMAGES ───────────────
+        // Format: job_{id}_tyreqr_{position}_{timestamp}.jpg
+        } else if (url.contains('_tyreqr_') && !url.contains('_tyreqr_product_')) {
+          // Extract position from filename, e.g. tyreqr_Front_Left_
+          final match = RegExp(r'_tyreqr_(.+?)_\d+\.jpg').firstMatch(url);
+          if (match != null) {
+            // Reconstruct position with spaces (was saved with underscores)
+            final rawPos = match.group(1)!.replaceAll('_', ' ');
+            // Find the closest matching wheel position
+            final position = _requiredWheels.firstWhere(
+              (w) => w.replaceAll(' ', '_') == match.group(1)!,
+              orElse: () => rawPos,
+            );
+            if (mounted) {
+              setState(() {
+                _tyreQRImages[position] = bytes;
+              });
+            }
+          }
+
+        // ─────────────── VEHICLE WHEEL PHOTOS ───────────────
+        // Format: job_{id}_wheel_{position}_{timestamp}.jpg
+        } else if (url.contains('_wheel_')) {
+          final match = RegExp(r'_wheel_(.+?)_\d+\.jpg').firstMatch(url);
+          if (match != null) {
+            final rawPos = match.group(1)!;
+            final position = _requiredWheels.firstWhere(
+              (w) => w.replaceAll(' ', '_') == rawPos,
+              orElse: () => rawPos.replaceAll('_', ' '),
+            );
+            final file = File('${dir.path}/draft_wheel_${rawPos}_$ts.jpg');
+            await file.writeAsBytes(bytes);
+            if (mounted) {
+              setState(() {
+                _wheelPhotos[position] = XFile(file.path);
+              });
+            }
+          }
+
+        // ─────────────── VEHICLE / PACKAGE PHOTOS ───────────────
+        // Format: job_{id}_vehicle_{i}_{timestamp}.jpg  (vehicle) or courier package
+        } else if (url.contains('_vehicle_')) {
+          final file = File('${dir.path}/draft_vehicle_$ts.jpg');
+          await file.writeAsBytes(bytes);
+          if (mounted) {
+            setState(() {
+              if (_isCourierMode) {
+                _courierPhotos.add(XFile(file.path));
+              } else {
+                _vehiclePhotos.add(XFile(file.path));
+              }
+            });
+          }
+
+        // ─────────────── ODOMETER PHOTO ───────────────
+        // Format: job_{id}_odometer_{timestamp}.jpg
+        } else if (url.contains('_odometer_')) {
+          final file = File('${dir.path}/draft_odometer_$ts.jpg');
+          await file.writeAsBytes(bytes);
+          if (mounted) {
+            setState(() {
+              _odometerPhoto = XFile(file.path);
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('Error downloading draft media $url: $e');
+      }
+    }
   }
 
   Future<void> _fetchTechnicians() async {
@@ -320,6 +658,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _vehicleNumberController.clear();
       _vehicleDetails = null;
       _showCreateVehicleForm = false;
+      _isVehicleJobCardDraft = false;
+      _loadedRegistrationDraftId = null;
       _complaints.clear();
       _currentVehicleId = null;
       _searchError = null;
@@ -543,6 +883,192 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
+  Future<void> _saveVehicleRegistrationDraft() async {
+    final vehicleNo = VehicleNumberUtils.normalize(_vehicleNumberController.text.trim());
+    if (vehicleNo.isEmpty) {
+      _showErrorSnackBar('Please enter a vehicle number to save a draft.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final user = userProvider.user;
+
+      if (!CompanyService().hasActiveCompany) {
+        await CompanyService().loadPersistedCompany();
+      }
+      final String? companyGuid = CompanyService().guid;
+
+      final int? odoReading = int.tryParse(_newOdometerController.text.trim().isNotEmpty
+          ? _newOdometerController.text.trim()
+          : _odometerController.text.trim());
+
+      final draftData = {
+        'status': AppConstants.statusDraft,
+        'vehicle_id': _currentVehicleId,
+        'Owner name': _newClientNameController.text.trim().isNotEmpty ? _newClientNameController.text.trim() : null,
+        'client_phone': _newClientPhoneController.text.trim().isNotEmpty ? _newClientPhoneController.text.trim() : null,
+        'odometer_reading': odoReading,
+        'complaint': jsonEncode(_complaints),
+        'Guid': companyGuid,
+        'marks': jsonEncode({
+          'is_vehicle_registration_draft': true,
+          'vehicle_number': vehicleNo,
+          'client_mobile': _newClientMobileController.text.trim(),
+          'gst_no': _ownerGstController.text.trim(),
+          'brand': _selectedBrand,
+          'model_id': _selectedModelId,
+          'model_name': _selectedModelName,
+        }),
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'executive_id': user?['id'],
+      };
+
+      final dynamic targetDraftId = widget.draftJob != null ? widget.draftJob!['id'] : _loadedRegistrationDraftId;
+      if (targetDraftId != null) {
+        draftData.remove('created_at');
+        await supabase.from('reports').update(draftData).eq('id', targetDraftId);
+      } else {
+        await supabase.from('reports').insert(draftData);
+      }
+
+      if (!mounted) return;
+      final String formattedNow = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Vehicle registration draft saved on $formattedNow!'),
+          backgroundColor: Colors.purple,
+        ),
+      );
+
+      _resetScreen();
+    } catch (e) {
+      _showErrorSnackBar('Failed to save draft: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _openFullPageRegistrationDrafts() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SavedRegistrationDraftsScreen(
+          onSelectDraft: (draft) {
+            _loadDraftIntoForm(draft);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _loadDraftIntoForm(Map<String, dynamic> draft, {bool showSnackBar = true}) {
+    setState(() {
+      Map<String, dynamic> marks = {};
+      if (draft['marks'] is String) {
+        try { marks = jsonDecode(draft['marks']); } catch (_) {}
+      } else if (draft['marks'] is Map) {
+        marks = Map<String, dynamic>.from(draft['marks']);
+      }
+
+      int? vehId;
+      if (draft['vehicle_id'] != null) {
+        vehId = draft['vehicle_id'] is int ? draft['vehicle_id'] as int : int.tryParse(draft['vehicle_id'].toString());
+      }
+      if (vehId == null && draft['vehicles'] is Map && draft['vehicles']['id'] != null) {
+        vehId = draft['vehicles']['id'] is int ? draft['vehicles']['id'] as int : int.tryParse(draft['vehicles']['id'].toString());
+      }
+      _currentVehicleId = vehId;
+
+      final String vehNo = marks['vehicle_number'] ?? draft['Vehicle Number'] ?? draft['vehicles']?['Vehicle Number'] ?? '';
+      _vehicleNumberController.text = vehNo;
+      _newClientNameController.text = draft['Owner name'] ?? '';
+      _newClientPhoneController.text = draft['client_phone'] ?? '';
+      _newClientMobileController.text = marks['client_mobile'] ?? draft['client_mobile'] ?? '';
+      _ownerGstController.text = marks['gst_no'] ?? draft['gst_no'] ?? '';
+      _newOdometerController.text = draft['odometer_reading']?.toString() ?? '';
+      
+      _selectedBrand = marks['brand'] as String?;
+      _selectedModelId = int.tryParse(marks['model_id']?.toString() ?? '');
+      _selectedModelName = marks['model_name'] as String?;
+
+      _selectedGlobalTyreBrand = marks['tyre_brand'] as String?;
+      _selectedGlobalTyreModel = marks['tyre_model'] as String?;
+      _selectedGlobalTyreSize = marks['tyre_size'] as String?;
+      _selectedGlobalTyreLiSi = marks['tyre_li_si'] as String?;
+
+      _loadedRegistrationDraftId = draft['id'];
+      final bool isRegistrationDraft = marks['is_vehicle_registration_draft'] == true;
+
+      if (isRegistrationDraft) {
+        // Vehicle Registration Draft: Show vehicle registration form prefilled (vehicle not in DB yet)
+        _isVehicleJobCardDraft = false;
+        _showCreateVehicleForm = true;
+        _vehicleDetails = null;
+      } else {
+        // Real Job Card Draft: Show green Vehicle Found banner and complaints section
+        _isVehicleJobCardDraft = true;
+        _showCreateVehicleForm = false;
+        if (draft['vehicles'] is Map) {
+          _vehicleDetails = Map<String, dynamic>.from(draft['vehicles']);
+        } else {
+          _vehicleDetails = {
+            'Vehicle Number': vehNo,
+            'Owner name': draft['Owner name'] ?? '',
+            'client_phone': draft['client_phone'] ?? '',
+            'Guid': draft['Guid'],
+          };
+        }
+
+        if (_currentVehicleId == null && vehNo.isNotEmpty) {
+          SupabaseService().searchVehicle(vehNo).then((resp) {
+            if (resp != null && mounted) {
+              setState(() {
+                _currentVehicleId = resp['id'];
+                _vehicleDetails = resp;
+              });
+            }
+          });
+        }
+      }
+
+      final rawComplaints = draft['complaint'];
+      _complaints.clear();
+      if (rawComplaints is List) {
+        _complaints.addAll(List<Map<String, dynamic>>.from(rawComplaints.map((e) => Map<String, dynamic>.from(e))));
+      } else if (rawComplaints is String && rawComplaints.startsWith('[')) {
+        try {
+          final decoded = jsonDecode(rawComplaints) as List;
+          _complaints.addAll(List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e))));
+        } catch (_) {}
+      }
+
+      final rawAssignments = draft['technician_assignments'];
+      _technicianAssignments.clear();
+      if (rawAssignments is List) {
+        _technicianAssignments.addAll(List<Map<String, dynamic>>.from(rawAssignments.map((e) => Map<String, dynamic>.from(e))));
+      } else if (rawAssignments is String && rawAssignments.trim().startsWith('[')) {
+        try {
+          final decoded = jsonDecode(rawAssignments) as List;
+          _technicianAssignments.addAll(List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e))));
+        } catch (_) {}
+      }
+    });
+
+    if (showSnackBar) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Loaded draft for ${_vehicleNumberController.text}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      });
+    }
+  }
+
   Future<void> _saveJobCard({bool isDraft = false}) async {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     if (_complaints.isEmpty) {
@@ -557,11 +1083,6 @@ class _JobCardScreenState extends State<JobCardScreen> {
       return;
     }
 
-    final today = DateTime.now();
-    final startOfDay =
-        DateTime(today.year, today.month, today.day).toIso8601String();
-    final endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59)
-        .toIso8601String();
 
     setState(() => _isLoading = true);
     showDialog(
@@ -584,6 +1105,16 @@ class _JobCardScreenState extends State<JobCardScreen> {
     );
 
     try {
+      // ✅ Skip duplicate check entirely when updating an existing draft
+      if (widget.draftJob != null) {
+        await _executeSaveJobCard(isDraft: isDraft);
+        return;
+      }
+
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day).toIso8601String();
+      final endOfDay = DateTime(today.year, today.month, today.day, 23, 59, 59).toIso8601String();
+
       final existingReports = await supabase
           .from('reports')
           .select('id, executive:executive_id(username)')
@@ -771,41 +1302,69 @@ class _JobCardScreenState extends State<JobCardScreen> {
       }
       final String barcodeJson = tyreDetails.isNotEmpty ? jsonEncode(tyreDetails) : '';
 
+      final Map<String, dynamic> marksPayload = {
+        ...marksJson.asMap().map((k, v) => MapEntry(k.toString(), v)),
+        // Save tyre spec fields so they're restored on draft reopen
+        if (_selectedGlobalTyreBrand != null) 'tyre_brand': _selectedGlobalTyreBrand,
+        if (_selectedGlobalTyreModel != null) 'tyre_model': _selectedGlobalTyreModel,
+        if (_selectedGlobalTyreSize != null) 'tyre_size': _selectedGlobalTyreSize,
+        if (_selectedGlobalTyreLiSi != null) 'tyre_li_si': _selectedGlobalTyreLiSi,
+      };
+
       final Map<String, dynamic> insertData = {
         'vehicle_id': _currentVehicleId,
-        'executive_id': executiveId, // Passes int?
+        'executive_id': executiveId,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
         'complaint': jsonEncode(_complaints),
         if (barcodeJson.isNotEmpty) 'barcode': barcodeJson,
         'status': isDraft ? AppConstants.statusDraft : AppConstants.statusWorkInProgress, 
-        'started_at': isDraft ? null : DateTime.now().toIso8601String(), // Start the timer immediately upon creation only if not draft
-        'marks': jsonEncode(marksJson),
-        'odometer_reading': newOdometer, // Save the entered value
+        'started_at': isDraft ? null : (widget.draftJob?['started_at'] ?? DateTime.now().toUtc().toIso8601String()),
+        'marks': jsonEncode(marksPayload),
+        'odometer_reading': newOdometer,
         'labour_cost': double.tryParse(_laborCostController.text) ?? 0.0,
         'Owner name': _newClientNameController.text.trim(),
         'client_phone': _newClientPhoneController.text.trim(),
         'technician_assignments': _technicianAssignments.isNotEmpty ? jsonEncode(_technicianAssignments) : null,
-        'gdrive_folder_url': null,
-        'photo_urls': null,
         'Guid': companyGuid,
         'company_name': companyName,
       };
+
+      // Preserve existing photo_urls from draft (don't wipe them on re-save)
+      if (widget.draftJob != null) {
+        final existingPhotos = widget.draftJob!['photo_urls'];
+        if (existingPhotos != null) {
+          insertData['photo_urls'] = existingPhotos;
+        }
+      } else {
+        insertData['photo_urls'] = null;
+      }
 
       // Add booking_id if this job card is created from a direct booking
       if (widget.bookingId != null) {
         insertData['booking_id'] = widget.bookingId!;
       }
 
-      // Insert report and return its ID (jobId)
-      final inserted = await vehicleService.createReport(context, insertData);
-      
-      final int jobId = inserted['id'] as int;
-      final String? jobCardId = inserted['job_card_id'] as String?;
+      int jobId;
+      String? jobCardId;
+
+      if (widget.draftJob != null) {
+        jobId = widget.draftJob!['id'] is int
+            ? widget.draftJob!['id'] as int
+            : int.parse(widget.draftJob!['id'].toString());
+        insertData.remove('created_at');
+        await supabase.from('reports').update(insertData).eq('id', jobId);
+        jobCardId = widget.draftJob!['job_card_id'] as String?;
+      } else {
+        final inserted = await vehicleService.createReport(context, insertData);
+        jobId = inserted['id'] as int;
+        jobCardId = inserted['job_card_id'] as String?;
+      }
 
       // Upload media to Supabase Storage asynchronously
       _uploadMediaInBackground(
         jobId: jobId,
         wheelPhotos: Map.from(_wheelPhotos),
-        vehiclePhoto: _vehiclePhotos.isNotEmpty ? _vehiclePhotos.first : null,
+        vehiclePhotos: List.from(_vehiclePhotos),
         tyreQRImages: Map.from(_tyreQRImages),
         odometerPhoto: _odometerPhoto,
       );
@@ -841,21 +1400,26 @@ class _JobCardScreenState extends State<JobCardScreen> {
         }).eq('id', widget.bookingId!);
       }
 
-      _showSuccessSnackBar(isDraft ? 'Draft saved successfully!' : 'Job card created successfully!${(_wheelPhotos.isNotEmpty || _audioPath != null) ? ' Media saved locally for this job.' : ''}');
+      final String formattedNow = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now());
+      _showSuccessSnackBar(isDraft 
+          ? 'Draft saved successfully on $formattedNow!' 
+          : (widget.draftJob?['status'] == AppConstants.statusWorkInProgress 
+              ? 'Job card updated successfully!' 
+              : 'Job card created successfully!${(_wheelPhotos.isNotEmpty || _audioPath != null) ? ' Media saved locally for this job.' : ''}'));
 
       if (mounted) {
         // ✅ FIX: Pass the integer user ID to refresh
         await Provider.of<ReportProvider>(context, listen: false)
             .refresh(user['id']);
         
-        // Show WhatsApp share dialog if tyre details exist
-        if (tyreDetails.isNotEmpty) {
+        // Show WhatsApp share dialog if tyre details exist (only when creating full job card, not on draft)
+        if (!isDraft && tyreDetails.isNotEmpty && widget.draftJob?['status'] != AppConstants.statusWorkInProgress) {
           final String displayJobId = jobCardId?.isNotEmpty == true ? jobCardId! : jobId.toString();
           await _showWhatsAppShareDialog(displayJobId, tyreDetails);
         }
 
-        // If this was created from a direct booking, navigate back with success
-        if (widget.bookingId != null) {
+        // If this was opened for editing/draft, pop back after saving
+        if (widget.bookingId != null || widget.draftJob != null) {
           Navigator.of(context).pop(true);
           return;
         }
@@ -874,7 +1438,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   Future<void> _uploadMediaInBackground({
     required int jobId,
     required Map<String, XFile> wheelPhotos,
-    required XFile? vehiclePhoto,
+    required List<XFile> vehiclePhotos,
     required Map<String, Uint8List> tyreQRImages,
     required XFile? odometerPhoto,
   }) async {
@@ -888,8 +1452,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
       uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
     }
     
-    if (vehiclePhoto != null) {
-      uploadTasks.add(vehiclePhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    for (int i = 0; i < vehiclePhotos.length; i++) {
+      final photoXFile = vehiclePhotos[i];
+      uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${i}_${DateTime.now().millisecondsSinceEpoch}.jpg')));
     }
     
     for (final entry in tyreQRImages.entries) {
@@ -905,10 +1470,23 @@ class _JobCardScreenState extends State<JobCardScreen> {
     final results = await Future.wait(uploadTasks);
     uploadedUrls = results.where((url) => url != null).cast<String>().toList();
 
-    // Update the reports table with the photo_urls
+    // Update the reports table with the photo_urls (merging with existing draft photos if any)
     if (uploadedUrls.isNotEmpty) {
+      List<String> finalUrls = List.from(uploadedUrls);
+      final existingPhotos = widget.draftJob?['photo_urls'];
+      if (existingPhotos != null) {
+        List<String> prevUrls = [];
+        if (existingPhotos is String) {
+          try { prevUrls = List<String>.from(jsonDecode(existingPhotos)); } catch (_) {}
+        } else if (existingPhotos is List) {
+          prevUrls = List<String>.from(existingPhotos.map((e) => e.toString()));
+        }
+        for (final u in prevUrls) {
+          if (!finalUrls.contains(u)) finalUrls.add(u);
+        }
+      }
       await supabase.from('reports').update({
-        'photo_urls': uploadedUrls
+        'photo_urls': finalUrls
       }).eq('id', jobId);
     }
   }
@@ -946,6 +1524,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     final clientPhone = _newClientPhoneController.text.trim();
     final vehicleBrand = _vehicleDetails?['vehicle_models']?['brand'] ?? 'N/A';
     final vehicleModel = _vehicleDetails?['vehicle_models']?['Model name'] ?? 'N/A';
+    final odo = _newOdometerController.text.trim().isNotEmpty ? _newOdometerController.text.trim() : _odometerController.text.trim();
 
     try {
       final pdf = pw.Document();
@@ -972,9 +1551,16 @@ class _JobCardScreenState extends State<JobCardScreen> {
                   ),
                   pw.SizedBox(height: 10),
                   pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
-                  pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
-                  pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+                  if (vehicleNo.isNotEmpty && vehicleNo != 'Courier Package' && vehicleNo != 'N/A') ...[
+                    pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+                    if (vehicleBrand.isNotEmpty || vehicleModel.isNotEmpty)
+                      pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+                    if (odo.isNotEmpty && odo != 'N/A')
+                      pw.Text('Odometer Reading: $odo km', style: const pw.TextStyle(fontSize: 16)),
+                  ],
                   pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+                  if (_courierAddressController.text.trim().isNotEmpty)
+                    pw.Text('Address: ${_courierAddressController.text.trim()}', style: const pw.TextStyle(fontSize: 16)),
                   pw.SizedBox(height: 20),
                   if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 16)),
                   pw.SizedBox(height: 10),
@@ -1123,11 +1709,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
       _showErrorSnackBar('Please select Tyre Brand and Model first.');
       return;
     }
-    final complaintText = 'Tyre - $_selectedGlobalTyreBrand $_selectedGlobalTyreModel';
+    final sizeStr = _selectedGlobalTyreSize != null ? ' $_selectedGlobalTyreSize' : '';
+    final liSiStr = _selectedGlobalTyreLiSi != null ? ' $_selectedGlobalTyreLiSi' : '';
+    final complaintText = 'Tyre - $_selectedGlobalTyreBrand $_selectedGlobalTyreModel$sizeStr$liSiStr';
 
-    double unitPrice = double.tryParse(_complaintAmountController.text) ?? 0.0;
-    int count = int.tryParse(_complaintCountController.text) ?? 1;
-    double totalPrice = unitPrice * count;
+    double unitPrice = double.tryParse(_tyrePriceController.text) ?? 0.0;
+    int count = int.tryParse(_tyreCountController.text) ?? 1;
+    if (count < 1) count = 1;
+    double totalPrice = double.tryParse(_tyreTotalController.text) ?? (unitPrice * count);
 
     setState(() {
       _complaints.add({
@@ -1137,8 +1726,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
         'count': count,
         'type': AppConstants.typeComplaint
       });
-      _complaintAmountController.clear();
-      _complaintCountController.text = '1';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Added "$complaintText" ($count × ₹${unitPrice.toStringAsFixed(2)})'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ),
+      );
     });
   }
 
@@ -1496,11 +2091,34 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   void _showErrorSnackBar(String message) {
     if (!mounted) return;
+    String displayMessage = message;
+    final lower = message.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('clientexception') ||
+        lower.contains('connection abort') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('network_error') ||
+        lower.contains('timeoutexception') ||
+        lower.contains('failed to connect')) {
+      displayMessage = '📶 No internet connection. Please check your network and try again.';
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        duration: const Duration(milliseconds: 100),
+        content: Row(
+          children: [
+            const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                displayMessage,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFFDC2626),
+        duration: const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppTheme.borderRadiusLg)),
@@ -1557,6 +2175,29 @@ class _JobCardScreenState extends State<JobCardScreen> {
           ],
         ),
         centerTitle: true,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AppTheme.primaryColor),
+            tooltip: 'Options',
+            onSelected: (value) {
+              if (value == 'drafts') {
+                _openFullPageRegistrationDrafts();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem<String>(
+                value: 'drafts',
+                child: Row(
+                  children: [
+                    Icon(Icons.drafts_outlined, color: Colors.purple, size: 20),
+                    SizedBox(width: 10),
+                    Text('Saved Registration Drafts', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: GestureDetector(
         onTap: () => FocusScope.of(context).unfocus(),
@@ -1567,21 +2208,32 @@ class _JobCardScreenState extends State<JobCardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildSearchCard(),
+              _buildModeToggle(),
+              const SizedBox(height: 16),
+              
+              if (!_isCourierMode) ...[
+                // ✅ Hide search bar and vehicle creation form when editing a vehicle draft
+                // (vehicle already exists — skip straight to complaint section)
+                if (!_isVehicleJobCardDraft) _buildSearchCard(),
 
-              // ✅ Use shimmer loading
-              if (_isLoading &&
-                  _vehicleDetails == null &&
-                  !_showCreateVehicleForm)
-                const Padding(
-                  padding: EdgeInsets.all(32.0),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
+                if (_isLoading &&
+                    _vehicleDetails == null &&
+                    !_showCreateVehicleForm)
+                  const Padding(
+                    padding: EdgeInsets.all(32.0),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
 
-              if (_vehicleDetails != null)
-                _buildVehicleDetailsCard(_vehicleDetails!),
-              if (_showCreateVehicleForm) _buildCreateVehicleForm(),
-              if (_vehicleDetails != null) _buildNewComplaintCard(),
+                if (_vehicleDetails != null)
+                  _buildVehicleDetailsCard(_vehicleDetails!),
+                // ✅ Only show vehicle creation form when NOT editing a vehicle draft
+                if (_showCreateVehicleForm && !_isVehicleJobCardDraft)
+                  _buildCreateVehicleForm(),
+                if (_vehicleDetails != null || _isVehicleJobCardDraft)
+                  _buildNewComplaintCard(),
+              ] else ...[
+                _buildCourierForm(),
+              ],
             ],
           ),
         ),
@@ -2049,14 +2701,35 @@ class _JobCardScreenState extends State<JobCardScreen> {
             decoration: const InputDecoration(hintText: 'e.g., 27AABCT1234H1Z0'),
           ),
           const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: ElevatedButton.icon(
-              onPressed: _isLoading ? null : _createVehicle,
-              icon: const Icon(Icons.save),
-              label: const Text('Save Vehicle'),
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: OutlinedButton(
+                    onPressed: _isLoading ? null : _saveVehicleRegistrationDraft,
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.purple),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Save as Draft', style: TextStyle(color: Colors.purple, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SizedBox(
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _createVehicle,
+                    style: ElevatedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('Save Vehicle', style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -2398,42 +3071,21 @@ class _JobCardScreenState extends State<JobCardScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _complaintAmountController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Amount',
-                    hintText: 'e.g. 100',
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  ),
-                ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _addTyreComplaint,
+              icon: const Icon(Icons.add_shopping_cart, size: 20),
+              label: const Text('Add Tyre', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                elevation: 0,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _complaintCountController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Count',
-                    hintText: 'e.g. 4',
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _addTyreComplaint,
-                style: ElevatedButton.styleFrom(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
-                child: const Text('Add Tyre'),
-              ),
-            ],
+            ),
           ),
           const SizedBox(height: 24),
           const FormLabel(text: 'Tyre QR Photos'),
@@ -2659,39 +3311,41 @@ class _JobCardScreenState extends State<JobCardScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          const FormLabel(text: 'Labour Charges'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _laborCostController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Enter amount',
-              prefixText: '₹ ',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 32),
 
           Row(
             children: [
-              Expanded(
-                child: SizedBox(
-                  height: 50,
-                  child: OutlinedButton.icon(
-                    onPressed: _isLoading ? null : () => _saveJobCard(isDraft: true),
-                    icon: const Icon(Icons.drafts_outlined),
-                    label: const Text('Save as Draft'),
+              if (widget.draftJob?['status'] != AppConstants.statusWorkInProgress) ...[
+                Expanded(
+                  child: SizedBox(
+                    height: 50,
+                    child: OutlinedButton(
+                      onPressed: _isLoading ? null : () => _saveJobCard(isDraft: true),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text(
+                        'Save as Draft',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 16),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: SizedBox(
                   height: 50,
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton(
                     onPressed: _isLoading ? null : () => _saveJobCard(isDraft: false),
-                    icon: const Icon(Icons.add_task),
-                    label: const Text('Create Job Card'),
+                    style: ElevatedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text(
+                      widget.draftJob?['status'] == AppConstants.statusWorkInProgress ? 'Save Updates' : 'Create Job Card',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
               ),
@@ -2700,6 +3354,638 @@ class _JobCardScreenState extends State<JobCardScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildModeToggle() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () => setState(() => _isCourierMode = false),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: !_isCourierMode ? AppTheme.primaryColor : Colors.transparent,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '🚗 Vehicle Service',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: !_isCourierMode ? Colors.white : Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                onTap: () => setState(() => _isCourierMode = true),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: _isCourierMode ? AppTheme.primaryColor : Colors.transparent,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '📦 Send Courier',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                      color: _isCourierMode ? Colors.white : Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCourierForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const FormLabel(text: 'Customer Details'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _courierNameController,
+                decoration: const InputDecoration(labelText: 'Customer Name', prefixIcon: Icon(Icons.person)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _courierPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Phone Number', prefixIcon: Icon(Icons.phone)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _courierAddressController,
+                decoration: const InputDecoration(labelText: 'Address', prefixIcon: Icon(Icons.home)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _courierGstController,
+                decoration: const InputDecoration(labelText: 'GST Number (Optional)', prefixIcon: Icon(Icons.receipt)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const FormLabel(text: 'Package Products'),
+              const SizedBox(height: 12),
+              
+              if (_courierProductsList.isEmpty)
+                const EmptyDisplay(
+                  message: 'No products added yet.',
+                  icon: Icons.inventory_2_outlined,
+                  subtitle: 'Add products to continue',
+                )
+              else
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _courierProductsList.length,
+                  itemBuilder: (context, index) {
+                    final product = _courierProductsList[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${product['brand'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    Text('${product['model'] ?? ''}', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                                    Text('${product['size'] ?? ''}', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                                    const SizedBox(height: 6),
+                                    Text('Qty: ${product['qty']}  |  Unit: ₹${product['price']}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text('Total: ₹${((product['price'] as double) * (product['qty'] as int)).toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                                  Row(
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blue),
+                                        onPressed: () => _editCourierProduct(index),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                        onPressed: () => _deleteCourierProduct(index),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Builder(
+                            builder: (context) {
+                                  final qrImages = product['qr_images'] as List<Uint8List>? ?? [];
+                                  final qty = product['qty'] as int;
+                                  
+                                  if (qrImages.isEmpty) {
+                                    return ElevatedButton.icon(
+                                      onPressed: () => _scanCourierProductQR(index),
+                                      icon: const Icon(Icons.qr_code_scanner, size: 16),
+                                      label: const Text('Scan QR / Barcode'),
+                                      style: ElevatedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                      ),
+                                    );
+                                  } else {
+                                    return Row(
+                                      children: [
+                                        Expanded(
+                                          child: SizedBox(
+                                            height: 40,
+                                            child: ListView.builder(
+                                              scrollDirection: Axis.horizontal,
+                                              itemCount: qrImages.length,
+                                              itemBuilder: (context, i) {
+                                                return Padding(
+                                                  padding: const EdgeInsets.only(right: 8),
+                                                  child: GestureDetector(
+                                                    onTap: () => _viewCourierQR(index, i),
+                                                    child: ClipRRect(
+                                                      borderRadius: BorderRadius.circular(4),
+                                                      child: Image.memory(qrImages[i], height: 40, width: 40, fit: BoxFit.cover),
+                                                    ),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        if (qrImages.length < qty)
+                                          ElevatedButton.icon(
+                                            onPressed: () => _scanCourierProductQR(index),
+                                            icon: const Icon(Icons.qr_code_scanner, size: 14),
+                                            label: Text('Scan Remaining (${qty - qrImages.length})'),
+                                            style: ElevatedButton.styleFrom(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              textStyle: const TextStyle(fontSize: 12),
+                                            ),
+                                          )
+                                        else if (qrImages.length > qty)
+                                          const Row(
+                                            children: [
+                                              Icon(Icons.warning, color: Colors.orange, size: 16),
+                                              SizedBox(width: 4),
+                                              Text('Excess QRs (Delete)', style: TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.bold)),
+                                            ],
+                                          )
+                                        else
+                                          const Row(
+                                            children: [
+                                              Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                              SizedBox(width: 4),
+                                              Text('All QRs Scanned', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)),
+                                            ],
+                                          )
+                                      ],
+                                    );
+                                  }
+                                },
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                
+              const SizedBox(height: 16),
+              
+              Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () async {
+                        final brands = _tyreCatalog.map((t) => t['brand'].toString().toUpperCase()).toSet().toList();
+                        brands.sort();
+                        final selected = await _showSearchableDropdown('Select Brand', brands);
+                        if (selected != null) {
+                          setState(() {
+                            _courierTyreBrand = selected;
+                            _courierTyreModel = null;
+                            _courierTyreSize = null;
+                            _courierProductPriceController.clear();
+                          });
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: const InputDecoration(labelText: 'Brand', isDense: true, border: OutlineInputBorder()),
+                        child: Text(_courierTyreBrand ?? 'Select', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: InkWell(
+                      onTap: _courierTyreBrand == null ? null : () async {
+                        final models = _tyreCatalog
+                            .where((t) => t['brand'].toString().toUpperCase() == _courierTyreBrand)
+                            .map((t) => t['model'].toString()).toSet().toList();
+                        models.sort();
+                        final selected = await _showSearchableDropdown('Select Model', models);
+                        if (selected != null) {
+                          setState(() {
+                            _courierTyreModel = selected;
+                            _courierTyreSize = null;
+                            _courierProductPriceController.clear();
+                          });
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: const InputDecoration(labelText: 'Model', isDense: true, border: OutlineInputBorder()),
+                        child: Text(_courierTyreModel ?? 'Select', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: InkWell(
+                      onTap: _courierTyreModel == null ? null : () async {
+                        final sizes = _tyreCatalog
+                            .where((t) => t['brand'].toString().toUpperCase() == _courierTyreBrand && t['model'].toString() == _courierTyreModel)
+                            .map((t) => t['size'].toString()).toSet().toList();
+                        sizes.sort();
+                        final selected = await _showSearchableDropdown('Select Size', sizes);
+                        if (selected != null) {
+                          setState(() {
+                            _courierTyreSize = selected;
+                            final matchingTyre = _tyreCatalog.firstWhere(
+                              (t) => t['brand'].toString().toUpperCase() == _courierTyreBrand && 
+                                     t['model'].toString() == _courierTyreModel && 
+                                     t['size'].toString() == _courierTyreSize,
+                              orElse: () => {},
+                            );
+                            if (matchingTyre.isNotEmpty && matchingTyre['billing_price'] != null) {
+                              _courierProductPriceController.text = matchingTyre['billing_price'].toString();
+                            }
+                          });
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: const InputDecoration(labelText: 'Size', isDense: true, border: OutlineInputBorder()),
+                        child: Text(_courierTyreSize ?? 'Select', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _courierProductQtyController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Qty',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _courierProductPriceController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Unit Price',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (_editingCourierProductIndex != null)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _cancelEditCourierProduct,
+                        icon: const Icon(Icons.close),
+                        label: const Text('Cancel Edit'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _addCourierProduct,
+                        icon: const Icon(Icons.check),
+                        label: const Text('Update Product'),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _addCourierProduct,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Product'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const FormLabel(text: 'Additional Package Photos'),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: _takeCourierPhoto,
+                icon: const Icon(Icons.camera_alt),
+                label: const Text('Take Package Photo'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+              if (_courierPhotos.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 100,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _courierPhotos.length,
+                    itemBuilder: (context, i) => Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: Stack(
+                        children: [
+                          GestureDetector(
+                            onTap: () => _viewCourierPackagePhoto(i),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(File(_courierPhotos[i].path), width: 100, height: 100, fit: BoxFit.cover),
+                            ),
+                          ),
+                          Positioned(
+                            right: 0, top: 0,
+                            child: IconButton(
+                              icon: const Icon(Icons.cancel, color: Colors.red),
+                              onPressed: () => setState(() => _courierPhotos.removeAt(i)),
+                            ),
+                          )
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        ElevatedButton(
+          onPressed: _isLoading ? null : () => _submitCourierReport(status: AppConstants.statusCompleted),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: _isLoading 
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+              : const Text('Create Courier Job Card', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          onPressed: _isLoading ? null : () => _submitCourierReport(status: AppConstants.statusDraft),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.primaryColor,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: const Text('Save as Draft', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _takeCourierPhoto() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const UnlimitedCameraScreen(),
+      ),
+    );
+
+    if (result != null && result is List<XFile>) {
+      setState(() {
+        _courierPhotos.addAll(result);
+      });
+    }
+  }
+
+  void _viewCourierPackagePhoto(int photoIndex) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final imageFile = File(_courierPhotos[photoIndex].path);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                alignment: Alignment.topRight,
+                children: [
+                  InteractiveViewer(
+                    child: Image.file(imageFile, fit: BoxFit.contain),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _courierPhotos.removeAt(photoIndex);
+                  });
+                  Navigator.pop(context);
+                },
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Photo'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _submitCourierReport({required String status}) async {
+    final user = Provider.of<UserProvider>(context, listen: false).user;
+    if (user == null) {
+      _showErrorSnackBar('You are not logged in.');
+      return;
+    }
+
+    if (_courierNameController.text.trim().isEmpty) {
+      _showErrorSnackBar('Please enter Customer Name.');
+      return;
+    }
+    
+    if (_courierProductsList.isEmpty) {
+      _showErrorSnackBar('Please add at least one product before submitting.');
+      return;
+    }
+    
+    setState(() => _isLoading = true);
+
+    try {
+      final List<Map<String, dynamic>> finalProducts = _courierProductsList.map((p) {
+        return {
+          'brand': p['brand'],
+          'model': p['model'],
+          'size': p['size'],
+          'name': p['name'],
+          'price': p['price'],
+          'qty': p['qty'],
+        };
+      }).toList();
+
+      final marksJson = {
+        'is_courier': true,
+        'products': finalProducts,
+        'gst_no': _courierGstController.text.trim(),
+        'address': _courierAddressController.text.trim(),
+      };
+
+      final int? executiveId = (user['role'] == AppConstants.rolePickupDropoff) ? null : user['id'];
+      
+      if (!CompanyService().hasActiveCompany) {
+        await CompanyService().loadPersistedCompany();
+      }
+      
+      final Map<String, dynamic> insertData = {
+        'vehicle_id': null, // Explicitly null for couriers
+        'executive_id': executiveId,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'complaint': jsonEncode(['Courier Dispatch']),
+        'status': status, 
+        'started_at': status == AppConstants.statusDraft ? null : DateTime.now().toUtc().toIso8601String(),
+        'completed_at': status == AppConstants.statusCompleted ? DateTime.now().toUtc().toIso8601String() : null,
+        'marks': jsonEncode(marksJson),
+        'labour_cost': 0, // Removed labour_cost calculation for Couriers
+        'Owner name': _courierNameController.text.trim(),
+        'client_phone': _courierPhoneController.text.trim(),
+        'Guid': CompanyService().guid,
+        'company_name': CompanyService().companyName,
+      };
+
+      int jobId;
+      if (widget.draftJob != null) {
+        jobId = widget.draftJob!['id'];
+        await supabase.from('reports').update(insertData).eq('id', jobId);
+      } else {
+        final inserted = await vehicleService.createReport(context, insertData);
+        jobId = inserted['id'] as int;
+      }
+
+      Map<String, Uint8List> productQRs = {};
+      for (int i = 0; i < _courierProductsList.length; i++) {
+        final images = _courierProductsList[i]['qr_images'] as List<Uint8List>? ?? [];
+        for (int j = 0; j < images.length; j++) {
+          productQRs['product_${i}_qr_$j'] = images[j];
+        }
+      }
+
+      if (_courierPhotos.isNotEmpty || productQRs.isNotEmpty) {
+        _uploadMediaInBackground(
+          jobId: jobId,
+          wheelPhotos: {},
+          vehiclePhotos: List.from(_courierPhotos),
+          tyreQRImages: productQRs,
+          odometerPhoto: null,
+        );
+      }
+
+      if (mounted) {
+        _showSuccessSnackBar(widget.draftJob != null ? 'Courier Job Card updated successfully!' : 'Courier Job Card created successfully!');
+        if (widget.draftJob != null) {
+          Navigator.pop(context);
+        } else {
+          _resetScreen(); // Existing reset form function
+          
+          // Reset courier fields too
+          _courierNameController.clear();
+          _courierPhoneController.clear();
+          _courierAddressController.clear();
+          _courierGstController.clear();
+          setState(() {
+            _courierProductsList.clear();
+            _courierPhotos.clear();
+            _isCourierMode = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) _showErrorSnackBar('Error: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
 }
@@ -2724,4 +4010,225 @@ class DamagePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant DamagePainter oldDelegate) =>
       oldDelegate.marks != marks;
+}
+
+class SavedRegistrationDraftsScreen extends StatefulWidget {
+  final Function(Map<String, dynamic> draft) onSelectDraft;
+  const SavedRegistrationDraftsScreen({super.key, required this.onSelectDraft});
+
+  @override
+  State<SavedRegistrationDraftsScreen> createState() => _SavedRegistrationDraftsScreenState();
+}
+
+class _SavedRegistrationDraftsScreenState extends State<SavedRegistrationDraftsScreen> {
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _drafts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchDrafts();
+  }
+
+  Future<void> _fetchDrafts() async {
+    setState(() => _isLoading = true);
+    try {
+      if (!CompanyService().hasActiveCompany) {
+        await CompanyService().loadPersistedCompany();
+      }
+      final String? companyGuid = CompanyService().guid;
+
+      var query = Supabase.instance.client
+          .from('reports')
+          .select('*')
+          .eq('status', AppConstants.statusDraft);
+
+      if (companyGuid != null && companyGuid.isNotEmpty) {
+        query = query.eq('Guid', companyGuid);
+      }
+
+      final res = await query.order('created_at', ascending: false);
+
+      final List<Map<String, dynamic>> loaded = [];
+      for (var r in (res as List)) {
+        final map = Map<String, dynamic>.from(r);
+        final marks = map['marks'];
+        bool isCourier = false;
+        if (marks is String && marks.contains('"is_courier":true')) {
+          isCourier = true;
+        } else if (marks is Map && marks['is_courier'] == true) {
+          isCourier = true;
+        }
+        if (!isCourier) {
+          loaded.add(map);
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _drafts = loaded;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('🔴 Error fetching drafts: $e');
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _deleteDraft(Map<String, dynamic> draft) async {
+    final dynamic rawId = draft['id'];
+    final int? id = rawId is int ? rawId : int.tryParse(rawId?.toString() ?? '');
+    if (id == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Draft'),
+        content: const Text('Are you sure you want to delete this draft registration?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        try {
+          await Supabase.instance.client.from('reports').delete().eq('id', id);
+        } catch (e) {
+          debugPrint('⚠️ Hard delete failed: $e');
+        }
+
+        // Soft delete / cancel status to guarantee removal from Drafts
+        await Supabase.instance.client.from('reports').update({
+          'status': AppConstants.statusCancelled,
+        }).eq('id', id);
+
+        if (mounted) {
+          setState(() {
+            _drafts.removeWhere((item) {
+              final itemRawId = item['id'];
+              final itemId = itemRawId is int ? itemRawId : int.tryParse(itemRawId?.toString() ?? '');
+              return itemId == id;
+            });
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Draft deleted successfully'), backgroundColor: Colors.red),
+          );
+        }
+        await _fetchDrafts();
+      } catch (e) {
+        debugPrint('🔴 Error deleting draft: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete draft: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0.5,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppTheme.primaryColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text(
+          'Saved Registration Drafts',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+        ),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _drafts.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.drafts_outlined, size: 64, color: Colors.grey.shade400),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'No saved registration drafts found',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: _drafts.length,
+                      itemBuilder: (context, index) {
+                        final draft = _drafts[index];
+                        Map<String, dynamic> marksMap = {};
+                        final marks = draft['marks'];
+                        if (marks is String) {
+                          try { marksMap = jsonDecode(marks); } catch (_) {}
+                        } else if (marks is Map) {
+                          marksMap = Map<String, dynamic>.from(marks);
+                        }
+
+                        final vehicleNo = marksMap['vehicle_number'] ?? draft['Vehicle Number'] ?? draft['vehicles']?['Vehicle Number'] ?? 'Vehicle Registration';
+                        final clientName = draft['Owner name'] ?? 'N/A';
+                        final phone = draft['client_phone'] ?? 'N/A';
+                        final dateStr = draft['created_at'] != null
+                            ? DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(draft['created_at']))
+                            : '';
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      elevation: 2,
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: CircleAvatar(
+                          backgroundColor: Colors.purple.shade50,
+                          child: const Icon(Icons.directions_car, color: Colors.purple),
+                        ),
+                        title: Text(
+                          vehicleNo,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            'Client: $clientName ($phone)\nSaved: $dateStr',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, color: Colors.red),
+                              onPressed: () => _deleteDraft(draft),
+                              tooltip: 'Delete Draft',
+                            ),
+                            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                          ],
+                        ),
+                        onTap: () {
+                          widget.onSelectDraft(draft);
+                          Navigator.pop(context);
+                        },
+                      ),
+                    );
+                  },
+                ),
+    );
+  }
 }

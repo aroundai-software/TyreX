@@ -192,7 +192,7 @@ pw.Widget _buildCustomerAndVehicleDetails(
                     : pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
               ),
               pw.Divider(height: 8),
-              _buildDetailRow('Client:', report['client_phone'] ?? 'N/A', regularFont),
+              _buildDetailRow('Client:', report['Owner name'] ?? report['client_phone'] ?? 'N/A', regularFont),
               _buildDetailRow('Phone:', report['client_phone'] ?? 'N/A', regularFont),
               _buildDetailRow(
                 'Report Date:',
@@ -202,31 +202,33 @@ pw.Widget _buildCustomerAndVehicleDetails(
             ],
           ),
         ),
-        pw.SizedBox(width: 20),
-        // Vehicle Column
-        pw.Expanded(
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(
-                'Vehicle Information',
-                style: font != null
-                    ? pw.TextStyle(font: font, fontSize: 12)
-                    : pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
-              ),
-              pw.Divider(height: 8),
-              _buildDetailRow('Vehicle No:', vehicle?['Vehicle Number'] ?? 'N/A', regularFont),
-              _buildDetailRow(
-                'Brand/Model:',
-                '${model?['brand'] ?? ''} ${model?['Model name'] ?? ''}'.trim(),
-                regularFont,
-              ),
-              _buildDetailRow('Engine No:', vehicle?['Engine Number'] ?? 'N/A', regularFont),
-              _buildDetailRow('Chassis No:', vehicle?['Chasis Number'] ?? 'N/A', regularFont),
-              _buildDetailRow('Odometer:', '${report['odometer_reading'] ?? 'N/A'} km', regularFont),
-            ],
+        if (vehicle != null && vehicle['Vehicle Number'] != null && vehicle['Vehicle Number'] != 'Courier Package') ...[
+          pw.SizedBox(width: 20),
+          // Vehicle Column
+          pw.Expanded(
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'Vehicle Information',
+                  style: font != null
+                      ? pw.TextStyle(font: font, fontSize: 12)
+                      : pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold),
+                ),
+                pw.Divider(height: 8),
+                _buildDetailRow('Vehicle No:', vehicle['Vehicle Number'] ?? 'N/A', regularFont),
+                _buildDetailRow(
+                  'Brand/Model:',
+                  '${model?['brand'] ?? ''} ${model?['Model name'] ?? ''}'.trim(),
+                  regularFont,
+                ),
+                _buildDetailRow('Engine No:', vehicle['Engine Number'] ?? 'N/A', regularFont),
+                _buildDetailRow('Chassis No:', vehicle['Chasis Number'] ?? 'N/A', regularFont),
+                _buildDetailRow('Odometer:', '${report['odometer_reading'] ?? 'N/A'} km', regularFont),
+              ],
+            ),
           ),
-        ),
+        ],
       ],
     ),
   );

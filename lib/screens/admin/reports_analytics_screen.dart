@@ -15,6 +15,7 @@ import 'package:share_plus/share_plus.dart';
 import 'dart:io' as io;
 import 'package:universal_html/html.dart' as html;
 import '../../theme/app_theme.dart';
+import '../../utils/date_utils.dart';
 import '../../providers/admin_settings_provider.dart';
 import 'package:provider/provider.dart';
 import '../../widgets/modern_card.dart';
@@ -138,9 +139,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
           'client_phone': report['client_phone'],
           'executive': report['executive']?['username'],
           'date_time': DateFormat('dd/MM/yy HH:mm')
-              .format(DateTime.parse(report['created_at'].toString().endsWith('Z') 
-                  ? report['created_at'] 
-                  : '${report['created_at']}Z').toLocal()),
+              .format(AppDateUtils.parseUtcToLocal(report['created_at'].toString())),
           'status': _formatStatus(report['status']),
           'complaint': _formatJsonCell(report['complaint']),
           'approved': _formatJsonCell(report['approved']),
@@ -268,7 +267,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     // Date range filter
     if (_fromDate != null) {
       filtered = filtered.where((report) {
-        final reportDate = DateTime.parse(report['created_at']);
+        final reportDate = AppDateUtils.parseUtcToLocal(report['created_at']);
         return !reportDate.isBefore(_fromDate!);
       }).toList();
     }
@@ -277,7 +276,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
       final endOfDay =
           DateTime(_toDate!.year, _toDate!.month, _toDate!.day, 23, 59, 59);
       filtered = filtered.where((report) {
-        final reportDate = DateTime.parse(report['created_at']);
+        final reportDate = AppDateUtils.parseUtcToLocal(report['created_at']);
         return !reportDate.isAfter(endOfDay);
       }).toList();
     }
@@ -1150,11 +1149,33 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     final Map<String, DataCell> allCellDefinitions = {
       'job_id': DataCell(
         Container(
-          width: 150,
+          width: 180,
           padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(
-            report['job_card_id']?.toString() ?? 'Job #${report['id']}',
-            style: const TextStyle(fontSize: 14),
+          child: Row(
+            children: [
+              Flexible(
+                child: Text(
+                  report['job_card_id']?.toString() ?? 'Job #${report['id']}',
+                  style: const TextStyle(fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (_isCourierJob(report)) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.shade50,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.purple.shade200),
+                  ),
+                  child: const Text(
+                    'Courier',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
@@ -1164,7 +1185,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             report['started_at'] != null
-                ? DateFormat('dd/MM/yy HH:mm').format(DateTime.parse(report['started_at']).toLocal())
+                ? DateFormat('dd/MM/yy HH:mm').format(AppDateUtils.parseUtcToLocal(report['started_at']))
                 : 'N/A',
             style: const TextStyle(fontSize: 14),
           ),
@@ -1176,7 +1197,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             report['completed_at'] != null
-                ? DateFormat('dd/MM/yy HH:mm').format(DateTime.parse(report['completed_at']).toLocal())
+                ? DateFormat('dd/MM/yy HH:mm').format(AppDateUtils.parseUtcToLocal(report['completed_at']))
                 : 'N/A',
             style: const TextStyle(fontSize: 14),
           ),
@@ -1271,9 +1292,7 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Text(
             DateFormat('dd/MM/yy HH:mm')
-                .format(DateTime.parse(report['created_at'].toString().endsWith('Z')
-                    ? report['created_at']
-                    : '${report['created_at']}Z').toLocal()),
+                .format(AppDateUtils.parseUtcToLocal(report['created_at'].toString())),
             style: const TextStyle(fontSize: 14),
           ),
         ),
@@ -1364,7 +1383,28 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
     return '$minutes min';
   }
 
+  bool _isCourierJob(Map<String, dynamic> report) {
+    final vehicle = report['vehicles'];
+    if (vehicle != null && vehicle['Vehicle Number'] == 'Courier Package') {
+      return true;
+    }
+    final marks = report['marks'];
+    if (marks is Map && marks['is_courier'] == true) {
+      return true;
+    } else if (marks is String && marks.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(marks);
+        if (decoded is Map && decoded['is_courier'] == true) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   Widget _buildMobileReportCard(Map<String, dynamic> report, List<String> visibleColumns) {
+    final createdDate = AppDateUtils.parseUtcToLocal(report['created_at']?.toString());
+    final formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(createdDate);
+    final isCourier = _isCourierJob(report);
+
     return Card(
       elevation: 2,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1378,10 +1418,46 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    report['job_card_id']?.toString() ?? 'Job #${report['id']}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            report['job_card_id']?.toString() ?? 'Job #${report['id']}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isCourier) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.purple.shade200),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.inventory_2_outlined, size: 12, color: Colors.purple),
+                                SizedBox(width: 3),
+                                Text(
+                                  'Courier',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.purple,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Chip(
                     label: Text(
                       _formatStatus(report['status']),
@@ -1397,6 +1473,11 @@ class _ReportsAnalyticsScreenState extends State<ReportsAnalyticsScreen> {
               Text(
                 'Client: ${report['Owner name']?.toString() ?? 'N/A'}',
                 style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Date: $formattedDate',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
               ),
             ],
           ),

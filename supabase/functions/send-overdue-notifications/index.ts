@@ -131,7 +131,7 @@ Deno.serve(async (_req) => {
     // 2. Fetch overdue jobs (started > intervalMin ago, not finished)
     const { data: jobs, error: jobErr } = await supabase
       .from('reports')
-      .select('id, job_card_id, executive_id, last_reminder_sent_at, started_at')
+      .select('id, job_card_id, executive_id, last_reminder_sent_at, started_at, marks')
       .not('status', 'in', '("Completed","Delivered","Cancelled")')
       .lt('started_at', firstCutoff.toISOString())
       .not('executive_id', 'is', null)
@@ -143,8 +143,21 @@ Deno.serve(async (_req) => {
       return new Response(JSON.stringify({ message: 'No overdue jobs' }), { status: 200 })
     }
 
-    // 3. Filter: only jobs that haven't had a reminder yet, or it's been 30+ min
+    // 3. Filter: only jobs that haven't had a reminder yet, or it's been 30+ min, and ARE NOT COURIERS
     const toNotify = jobs.filter((j) => {
+      // Skip Courier jobs completely
+      let isCourier = false;
+      if (j.marks) {
+        let marksObj = j.marks;
+        if (typeof marksObj === 'string') {
+          try { marksObj = JSON.parse(marksObj) } catch (e) {}
+        }
+        if (marksObj && typeof marksObj === 'object' && marksObj.is_courier === true) {
+          isCourier = true;
+        }
+      }
+      if (isCourier) return false;
+
       if (!j.last_reminder_sent_at) return true
       return new Date(j.last_reminder_sent_at) < repeatCutoff
     })

@@ -22,6 +22,7 @@ import '../providers/user_provider.dart';
 import '../providers/admin_settings_provider.dart';
 import '../utils/app_constants.dart';
 import '../utils/validators.dart';
+import '../utils/date_utils.dart';
 import '../utils/haptic_utils.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -34,6 +35,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:printing/printing.dart';
 import 'package:http/http.dart' as http;
 
 class UpdateScreen extends StatefulWidget {
@@ -69,10 +71,19 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   String? _scannedBarcodeImageUrl; // ✅ Barcode image URL
   Uint8List? _newBarcodeImageBytes; // For new uploaded barcode
   final _barcodeController = TextEditingController();
+  String? _currentCreatedAt;
   String? _currentStartedAt;
   String? _currentCompletedAt;
   String? _currentJobCardId;
   String? _currentVehicleNo;
+  Map<String, dynamic>? _currentMarks; // ✅ Store marks for courier data
+  double? _currentDiscountAmount;
+  String? _currentDiscountType;
+  double? _currentGstPercent;
+  String? _currentCustomerName;
+  String? _currentCustomerPhone;
+  String? _currentCustomerAddress;
+  String? _currentGstNo;
   List<Map<String, dynamic>> _currentTechnicianAssignments = [];
   Map<String, dynamic>? _currentBookingData; // ✅ Store for later use
   List<Map<String, dynamic>> _originalComplaints = [];
@@ -164,7 +175,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 1);
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -387,8 +398,33 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final complaintList = _safeJsonDecodeList(response['complaint']);
       final approvedList = _safeJsonDecodeList(response['approved']);
 
-      // ✅ Extract rejection remarks
+      // ✅ Extract status and marks
       final status = response['status'];
+      final marksRaw = response['marks'];
+      Map<String, dynamic> marks = {};
+      if (marksRaw != null) {
+        if (marksRaw is String) {
+          try { marks = jsonDecode(marksRaw); } catch (_) {}
+        } else if (marksRaw is Map) {
+          marks = Map<String, dynamic>.from(marksRaw);
+        }
+      }
+
+      // ✅ Intercept ALL Drafts and route them to JobCardScreen
+      if (status == AppConstants.statusDraft) {
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => JobCardScreen(draftJob: response),
+            ),
+          ).then((_) {
+            _refreshData(); // Refresh jobs when coming back
+          });
+        }
+        return;
+      }
+      // ✅ Extract rejection remarks
       final remarks = response['inspection_remarks'];
 
       // --- ✅ ADD DEBUG PRINT FOR APPROVAL STATUS ---
@@ -494,10 +530,22 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       if (mounted) {
         setState(() {
           _currentReportId = reportId;
+          _currentCreatedAt = response['created_at'];
           _currentStartedAt = response['started_at'];
           _currentCompletedAt = response['completed_at'];
           _currentJobCardId = response['job_card_id'];
-          _currentVehicleNo = response['vehicles']['Vehicle Number'];
+          _currentVehicleNo = response['vehicles']?['Vehicle Number'] ?? marks['vehicle_number'] ?? (marks['is_courier'] == true ? 'Courier Package' : 'Vehicle Job Card');
+          _currentMarks = marks;
+          _currentDiscountAmount = (response['discount_amount'] as num?)?.toDouble();
+          _currentDiscountType = response['discount_type'];
+          _currentGstPercent = (response['gst_percent'] as num?)?.toDouble();
+          
+          if (marks['is_courier'] == true) {
+            _currentCustomerName = response['Owner name'] ?? bookingData?['customer_name'] ?? 'Unknown Customer';
+            _currentCustomerPhone = response['client_phone'] ?? bookingData?['customer_phone'] ?? 'No Phone';
+            _currentCustomerAddress = marks['address'] ?? bookingData?['pickup_address'] ?? 'No Address Provided';
+            _currentGstNo = marks['gst_no'];
+          }
           
           final techList = _safeJsonDecodeList(response['technician_assignments']);
           _currentTechnicianAssignments = List<Map<String, dynamic>>.from(techList);
@@ -611,6 +659,20 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
 
   double _calculateTotal() {
+    if (_currentVehicleNo == 'Courier Package' && _currentMarks != null && _currentMarks!['products'] != null) {
+      double total = 0.0;
+      for (var product in _currentMarks!['products']) {
+        total += (double.tryParse(product['price']?.toString() ?? '0') ?? 0.0) * (int.tryParse(product['qty']?.toString() ?? '1') ?? 1);
+      }
+      if (_currentDiscountAmount != null && _currentDiscountAmount! > 0) {
+        final calcDiscount = _currentDiscountType == 'percent'
+            ? total * (_currentDiscountAmount! / 100)
+            : _currentDiscountAmount!;
+        total -= calcDiscount;
+      }
+      return total;
+    }
+    
     double laborCost = double.tryParse(_laborCostController.text) ?? 0.0;
     
     if (_hasCustomerApproval) {
@@ -727,9 +789,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     if (_currentReportId == null || _isSubmitting) return;
 
     // ✅ Determine target tab for navigation
-    int targetTabIndex = 1; // Default to Pending Jobs
-    if (_openedFromTab == 'Work in Progress') targetTabIndex = 3;
-    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 2 : 0;
+    int targetTabIndex = 1; // Default to Work in Progress
+    if (_openedFromTab == 'Drafts') targetTabIndex = convertToJobCard ? 1 : 0;
+    if (_openedFromTab == 'Couriers') targetTabIndex = 2;
 
 
 
@@ -764,10 +826,10 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     // Handle status transition based on tab
     if (_openedFromTab == 'Work in Progress') {
       updateData['status'] = AppConstants.statusCompleted;
-      updateData['completed_at'] = DateTime.now().toIso8601String();
+      updateData['completed_at'] = DateTime.now().toUtc().toIso8601String();
     } else if (_openedFromTab == 'Drafts' && convertToJobCard) {
       updateData['status'] = AppConstants.statusWorkInProgress;
-      updateData['started_at'] = DateTime.now().toIso8601String();
+      updateData['started_at'] = DateTime.now().toUtc().toIso8601String();
     } else {
       // It's from 'Jobs' tab (Pending), so it should just save as 'Work in Progress' if they updated something
       // or we can just leave it to whatever it currently is. 
@@ -855,7 +917,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     }
 
     // ✅ Determine target tab for navigation
-    const int targetTabIndex = 0; // Default to Work in Progress
+    const int targetTabIndex = 1; // Default to Work in Progress
 
     // Prepare data with materials
     final updatedComplaints = _originalComplaints.asMap().entries.map((entry) {
@@ -975,7 +1037,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       return;
     }
 
-    const int targetTabIndex = 0; // Default to Work in Progress
+    const int targetTabIndex = 1; // Default to Work in Progress
 
     final updatedComplaints = _originalComplaints.asMap().entries.map((entry) {
       final index = entry.key;
@@ -1319,6 +1381,195 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     }
   }
 
+  // ✅ Delete draft: shows confirmation dialog then permanently removes from Supabase
+  void _confirmDeleteDraft(int reportId, String label) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 8,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 380),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFDC2626), Color(0xFF991B1B)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.delete_forever_rounded, color: Colors.white, size: 28),
+                      ),
+                      const SizedBox(width: 14),
+                      const Expanded(
+                        child: Text(
+                          'Delete Draft',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Body
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFCA5A5)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.info_outline_rounded, color: Color(0xFFB91C1C), size: 22),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                label,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF7F1D1D),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'This draft will be permanently deleted and cannot be recovered.',
+                        style: TextStyle(fontSize: 14, color: Color(0xFF374151), height: 1.4),
+                      ),
+                    ],
+                  ),
+                ),
+                // Actions
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: const BorderSide(color: Color(0xFFD1D5DB), width: 1.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          child: const Text(
+                            'Go Back',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF4B5563)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(dialogContext);
+                            _executeDraftDelete(reportId, label);
+                          },
+                          icon: const Icon(Icons.delete_forever_rounded, size: 18),
+                          label: const Text(
+                            'Delete',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFDC2626),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _executeDraftDelete(int reportId, String label) async {
+    debugPrint('🗑️ [DELETE DRAFT] Starting delete for reportId=$reportId label=$label');
+    try {
+      // Step 1: Delete from Supabase
+      await supabase.from('reports').delete().eq('id', reportId);
+      debugPrint('🗑️ [DELETE DRAFT] Supabase delete call completed');
+
+      if (!mounted) return;
+
+      // Step 2: Verify the row is actually gone from the database
+      // (Supabase delete is silent on RLS failures — no exception, just no rows deleted)
+      final check = await supabase
+          .from('reports')
+          .select('id')
+          .eq('id', reportId)
+          .maybeSingle();
+      debugPrint('🗑️ [DELETE DRAFT] Verify check result: $check');
+
+      if (check != null) {
+        // Row still exists in DB — delete was blocked (e.g. RLS policy)
+        debugPrint('❌ [DELETE DRAFT] Row $reportId still exists in DB after delete');
+        if (mounted) _showError('Delete failed. You may not have permission to delete this draft.');
+        return;
+      }
+
+      debugPrint('✅ [DELETE DRAFT] Row $reportId confirmed deleted from DB');
+
+      // Step 3: Remove instantly from the in-memory provider list
+      Provider.of<ReportProvider>(context, listen: false)
+          .removeReportById(reportId);
+      debugPrint('✅ [DELETE DRAFT] Removed from local provider list');
+
+      _showSuccess('Draft deleted successfully.');
+
+      // Step 4: Background refresh to sync
+      final user = Provider.of<UserProvider>(context, listen: false).user;
+      if (user != null && mounted) {
+        Provider.of<ReportProvider>(context, listen: false)
+            .refresh(user['id'] as int, isAdminMode: widget.isAdminMode);
+      }
+    } catch (e) {
+      debugPrint('❌ [DELETE DRAFT] Exception: $e');
+      if (mounted) _showError('Failed to delete draft: ${e.toString()}');
+    }
+  }
+
   void _resetUpdateForm() {
     _disposeAllControllers();
 
@@ -1406,62 +1657,108 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
   }
 
   Future<void> _shareWarrantyPDF() async {
-    final barcodeJson = _scannedBarcodeText ?? _barcodeController.text;
-    if (barcodeJson.isEmpty || barcodeJson == '{}') {
-      _showError('No warranty QR codes recorded.');
-      return;
-    }
-
-    Map<String, dynamic> barcodeData = {};
-    try {
-      barcodeData = jsonDecode(barcodeJson) as Map<String, dynamic>;
-    } catch (e) {
-      _showError('Could not parse warranty data. Make sure they are JSON.');
-      return;
-    }
-
-    final String jobIdStr = (_currentJobCardId?.isNotEmpty == true) 
-        ? _currentJobCardId! 
-        : _currentReportId?.toString() ?? 'N/A';
-    final vehicleNo = _currentVehicleNo ?? 'N/A';
-    
     final reportProvider = Provider.of<ReportProvider>(context, listen: false);
-    final report = reportProvider.reports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => <String, dynamic>{});
-    final clientName = report['Owner name'] ?? 'N/A';
-    final clientPhone = report['client_phone'] ?? 'N/A';
-    final vehicleBrand = report['vehicles']?['vehicle_models']?['brand'] ?? 'N/A';
-    final vehicleModel = report['vehicles']?['vehicle_models']?['Model name'] ?? 'N/A';
+    final report = reportProvider.reports.firstWhere(
+      (r) => r['id'] == _currentReportId,
+      orElse: () => reportProvider.unassignedReports.firstWhere(
+        (r) => r['id'] == _currentReportId,
+        orElse: () => <String, dynamic>{
+          'id': _currentReportId,
+          'job_card_id': _currentJobCardId,
+          'barcode': _scannedBarcodeText ?? _barcodeController.text,
+          'photo_urls': _jobMediaUrls,
+        },
+      ),
+    );
 
+    // Attach in-memory values if missing from report map
+    final targetReport = Map<String, dynamic>.from(report);
+    if ((targetReport['barcode'] == null || targetReport['barcode'].toString().isEmpty) &&
+        (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty)) {
+      targetReport['barcode'] = _scannedBarcodeText;
+    }
+    if (targetReport['photo_urls'] == null && _jobMediaUrls.isNotEmpty) {
+      targetReport['photo_urls'] = _jobMediaUrls;
+    }
+
+    await _shareWarrantyPDFForJob(targetReport);
+  }
+
+  Future<void> _shareWarrantyPDFForJob(Map<String, dynamic> job) async {
     try {
       final pdf = pw.Document();
+      final jobIdStr = job['job_card_id'] ?? '#${job['id']}';
+      final vehicleNo = job['vehicles']?['Vehicle Number'] ?? '';
+      final vehicleBrand = job['vehicles']?['vehicle_models']?['brand'] ?? '';
+      final vehicleModel = job['vehicles']?['vehicle_models']?['Model name'] ?? '';
+      final clientName = job['Owner name'] ?? job['bookings']?['customer_name'] ?? 'Client';
+      final clientPhone = job['client_phone'] ?? job['bookings']?['customer_phone'] ?? 'N/A';
+      final odometerReading = (job['odometer_reading'] ?? job['vehicles']?['Odometer Reading'] ?? '').toString().trim();
 
-      for (final entry in barcodeData.entries) {
+      Map<String, dynamic> marksMap = {};
+      final marksRaw = job['marks'];
+      if (marksRaw != null) {
+        if (marksRaw is Map) {
+          marksMap = Map<String, dynamic>.from(marksRaw);
+        } else if (marksRaw is String) {
+          try { marksMap = Map<String, dynamic>.from(jsonDecode(marksRaw)); } catch (_) {}
+        }
+      }
+      final String clientAddress = (marksMap['address'] ?? job['address'] ?? job['bookings']?['pickup_address'] ?? job['customer_address'] ?? '').toString().trim();
+
+      bool isCourier = marksMap['is_courier'] == true || job['vehicles'] == null;
+
+      String combinedBarcode = job['barcode'] ?? job['inspection_remarks'] ?? '';
+      Map<String, dynamic> barcodeMap = {};
+      if (combinedBarcode.isNotEmpty && combinedBarcode.startsWith('{')) {
+        try { barcodeMap = jsonDecode(combinedBarcode); } catch (_) {}
+      }
+
+      var photoUrlsRaw = job['photo_urls'];
+      List<String> photoUrls = [];
+      if (photoUrlsRaw != null) {
+        if (photoUrlsRaw is String) {
+          try { photoUrls = List<String>.from(jsonDecode(photoUrlsRaw)); } catch (_) {}
+        } else if (photoUrlsRaw is List) {
+          photoUrls = List<String>.from(photoUrlsRaw.map((e) => e.toString()));
+        }
+      }
+
+      int pageCount = 0;
+      for (var entry in barcodeMap.entries) {
         final position = entry.key;
-        final details = entry.value as Map<String, dynamic>;
-        final qrString = details['qr']?.toString() ?? '';
+        final details = entry.value;
+        if (details is! Map) continue;
+
+        final qrText = details['qr']?.toString() ?? '';
         final hasImage = details['has_image']?.toString() == 'true';
+        final imageBase64 = details['image']?.toString();
         final spec = details['spec']?.toString() ?? '';
 
-        if (qrString.isEmpty && !hasImage) {
-          continue; // Skip tires that don't have a QR scanned
-        }
+        if (qrText.isEmpty && !hasImage && (imageBase64 == null || imageBase64.isEmpty)) continue;
 
         Uint8List? imageBytes;
-        if (hasImage && _jobMediaUrls.isNotEmpty) {
+        if (imageBase64 != null && imageBase64.isNotEmpty) {
+          try { imageBytes = base64Decode(imageBase64); } catch (_) {}
+        }
+
+        if (imageBytes == null && photoUrls.isNotEmpty) {
           final safePosition = position.replaceAll(" ", "_");
-          final urlStr = _jobMediaUrls.firstWhere(
-            (url) => url.contains('_tyreqr_$safePosition'), 
+          final urlStr = photoUrls.firstWhere(
+            (url) => url.contains('_tyreqr_$safePosition') || url.contains('_tyreqr_'), 
             orElse: () => ''
           );
           if (urlStr.isNotEmpty) {
             try {
               final response = await http.get(Uri.parse(urlStr));
-              imageBytes = response.bodyBytes;
-            } catch (e) {
-              debugPrint('Failed to download image for PDF: $e');
-            }
+              if (response.statusCode == 200) {
+                imageBytes = response.bodyBytes;
+              }
+            } catch (_) {}
           }
         }
+
+        pageCount++;
 
         pdf.addPage(
           pw.Page(
@@ -1470,25 +1767,26 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
               return pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Header(
-                    level: 0,
-                    child: pw.Text('Tyre Warranty Details - $position', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
-                  ),
+                  pw.Text('WARRANTY DETAILS', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
                   pw.SizedBox(height: 10),
                   pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
-                  pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
-                  pw.Text('Model: $vehicleBrand $vehicleModel', style: const pw.TextStyle(fontSize: 16)),
+                  if (position.isNotEmpty && position != 'N/A')
+                    pw.Text('Position: $position', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+                  if (!isCourier && vehicleNo.isNotEmpty && vehicleNo != 'Courier Package' && vehicleNo != 'N/A')
+                    pw.Text('Vehicle: $vehicleNo${(vehicleBrand.isNotEmpty || vehicleModel.isNotEmpty) ? ' ($vehicleBrand $vehicleModel)' : ''}', style: const pw.TextStyle(fontSize: 16)),
+                  if (!isCourier && odometerReading.isNotEmpty && odometerReading != 'N/A')
+                    pw.Text('Odometer Reading: $odometerReading km', style: const pw.TextStyle(fontSize: 16)),
                   pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
-                  pw.SizedBox(height: 20),
-                  if (spec.isNotEmpty) pw.Text('Spec: $spec', style: const pw.TextStyle(fontSize: 16)),
-                  pw.SizedBox(height: 10),
+                  if (clientAddress.isNotEmpty && clientAddress != 'N/A')
+                    pw.Text('Address: $clientAddress', style: const pw.TextStyle(fontSize: 16)),
+                  pw.SizedBox(height: 15),
+                  if (qrText.isNotEmpty) pw.Text('QR / Serial Code: $qrText', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.blue800)),
+                  if (spec.isNotEmpty) pw.Text('Specification: $spec', style: const pw.TextStyle(fontSize: 14)),
+                  pw.SizedBox(height: 15),
                   if (imageBytes != null)
                     pw.Expanded(
                       child: pw.Center(
-                        child: pw.Image(
-                          pw.MemoryImage(imageBytes),
-                          fit: pw.BoxFit.contain,
-                        ),
+                        child: pw.Image(pw.MemoryImage(imageBytes), fit: pw.BoxFit.contain),
                       ),
                     ),
                 ],
@@ -1498,19 +1796,241 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         );
       }
 
-      final bytes = await pdf.save();
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/job_${jobIdStr}_warranty_qrs.pdf');
-      await file.writeAsBytes(bytes);
+      if (pageCount == 0 && photoUrls.isNotEmpty) {
+        final qrImages = photoUrls.where((url) => url.contains('_tyreqr_') || url.contains('_barcode_')).toList();
+        for (int i = 0; i < qrImages.length; i++) {
+          final urlStr = qrImages[i];
+          try {
+            final response = await http.get(Uri.parse(urlStr));
+            if (response.statusCode == 200) {
+              pageCount++;
+              final imageBytes = response.bodyBytes;
+              pdf.addPage(
+                pw.Page(
+                  pageFormat: PdfPageFormat.a4,
+                  build: (pw.Context context) {
+                    return pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('WARRANTY DETAILS', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
+                        pw.SizedBox(height: 10),
+                        pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
+                        if (!isCourier && vehicleNo.isNotEmpty && vehicleNo != 'Courier Package' && vehicleNo != 'N/A')
+                          pw.Text('Vehicle: $vehicleNo${(vehicleBrand.isNotEmpty || vehicleModel.isNotEmpty) ? ' ($vehicleBrand $vehicleModel)' : ''}', style: const pw.TextStyle(fontSize: 16)),
+                        if (!isCourier && odometerReading.isNotEmpty && odometerReading != 'N/A')
+                          pw.Text('Odometer Reading: $odometerReading km', style: const pw.TextStyle(fontSize: 16)),
+                        pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+                        if (clientAddress.isNotEmpty && clientAddress != 'N/A')
+                          pw.Text('Address: $clientAddress', style: const pw.TextStyle(fontSize: 16)),
+                        pw.SizedBox(height: 20),
+                        pw.Expanded(
+                          child: pw.Center(
+                            child: pw.Image(pw.MemoryImage(imageBytes), fit: pw.BoxFit.contain),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              );
+            }
+          } catch (_) {}
+        }
+      }
 
-      final String message = 'Warranty details for Job $jobIdStr (Vehicle: $vehicleNo)';
-      await Share.shareFiles(
-        [file.path],
-        text: message,
-        subject: 'Warranty details for Job $jobIdStr',
-      );
+      if (pageCount == 0) {
+        _showError('No QR or warranty details found for this job card.');
+        return;
+      }
+
+      final bytes = await pdf.save();
+      final filename = 'job_${jobIdStr}_warranty_qrs.pdf';
+      await Printing.sharePdf(bytes: bytes, filename: filename);
     } catch (e) {
-      _showError('Error generating or sharing PDF: $e');
+      _showError('Error generating or sharing Warranty PDF: $e');
+    }
+  }
+
+  Future<void> _shareJobCardPDF(Map<String, dynamic> job) async {
+    try {
+      final pdf = pw.Document();
+      final jobIdStr = job['job_card_id'] ?? '#${job['id']}';
+      final vehicleNo = job['vehicles']?['Vehicle Number'] ?? '';
+      final brand = job['vehicles']?['vehicle_models']?['brand'] ?? '';
+      final model = job['vehicles']?['vehicle_models']?['Model name'] ?? '';
+      final customerName = job['Owner name'] ?? job['bookings']?['customer_name'] ?? 'N/A';
+      final customerPhone = job['client_phone'] ?? job['bookings']?['customer_phone'] ?? 'N/A';
+      final createdAt = job['created_at'] != null
+          ? DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(job['created_at']))
+          : 'N/A';
+
+      Map<String, dynamic> jobMarksMap = {};
+      final jmRaw = job['marks'];
+      if (jmRaw != null) {
+        if (jmRaw is Map) {
+          jobMarksMap = Map<String, dynamic>.from(jmRaw);
+        } else if (jmRaw is String) {
+          try { jobMarksMap = Map<String, dynamic>.from(jsonDecode(jmRaw)); } catch (_) {}
+        }
+      }
+      final String clientAddress = (jobMarksMap['address'] ?? job['address'] ?? job['bookings']?['pickup_address'] ?? job['customer_address'] ?? '').toString().trim();
+      bool isCourier = jobMarksMap['is_courier'] == true || job['vehicles'] == null;
+
+      // Parse complaints/products
+      List<Map<String, dynamic>> items = [];
+      final rawComplaints = job['complaint'];
+      if (rawComplaints is List) {
+        items = List<Map<String, dynamic>>.from(rawComplaints.map((e) => Map<String, dynamic>.from(e)));
+      } else if (rawComplaints is String && rawComplaints.trim().startsWith('[')) {
+        try {
+          final decoded = jsonDecode(rawComplaints) as List;
+          items = List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e)));
+        } catch (_) {}
+      }
+
+      if (items.isEmpty && job['marks'] != null) {
+        final prods = jobMarksMap['products'] as List<dynamic>?;
+        if (prods != null) {
+          items = prods.map((p) => {
+            'text': p['name'] ?? '${p['brand']} ${p['model']}',
+            'qty': p['qty'] ?? 1,
+            'unit_price': p['price'] ?? p['amount'] ?? 0,
+            'amount': ((p['price'] ?? p['amount'] ?? 0) as num).toDouble() * ((p['qty'] ?? 1) as num),
+          }).toList();
+        }
+      }
+
+      // Fetch vehicle photos
+      List<Uint8List> fetchedPhotos = [];
+      var photoUrlsRaw = job['photo_urls'];
+      List<String> photoUrls = [];
+      if (photoUrlsRaw != null) {
+        if (photoUrlsRaw is String) {
+          try { photoUrls = List<String>.from(jsonDecode(photoUrlsRaw)); } catch (_) {}
+        } else if (photoUrlsRaw is List) {
+          photoUrls = List<String>.from(photoUrlsRaw.map((e) => e.toString()));
+        }
+      }
+
+      for (final url in photoUrls) {
+        final lowerUrl = url.toLowerCase();
+        if (lowerUrl.contains('qr') || lowerUrl.contains('barcode')) {
+          continue; // Skip QR code / barcode images in Job Card Details PDF
+        }
+        try {
+          final res = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
+          if (res.statusCode == 200) {
+            fetchedPhotos.add(res.bodyBytes);
+          }
+        } catch (_) {}
+      }
+
+      final currency = NumberFormat.currency(symbol: 'Rs. ', decimalDigits: 0);
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          build: (pw.Context context) {
+            return [
+              // Header
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text('JOB CARD SUMMARY', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
+                      pw.Text('Job Card ID: $jobIdStr', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+                      pw.Text('Date: $createdAt', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700)),
+                    ],
+                  ),
+                ],
+              ),
+              pw.Divider(thickness: 1, height: 20),
+
+              // Customer & Vehicle Info
+              pw.Container(
+                padding: const pw.EdgeInsets.all(12),
+                decoration: pw.BoxDecoration(color: PdfColors.grey100, borderRadius: pw.BorderRadius.circular(8)),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('CUSTOMER DETAILS', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
+                        pw.SizedBox(height: 4),
+                        pw.Text('Name: $customerName', style: const pw.TextStyle(fontSize: 12)),
+                        pw.Text('Phone: $customerPhone', style: const pw.TextStyle(fontSize: 12)),
+                        if (clientAddress.isNotEmpty && clientAddress != 'N/A')
+                          pw.Text('Address: $clientAddress', style: const pw.TextStyle(fontSize: 12)),
+                      ],
+                    ),
+                    if (!isCourier && vehicleNo.isNotEmpty && vehicleNo != 'Courier Package' && vehicleNo != 'N/A')
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('VEHICLE DETAILS', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: PdfColors.grey700)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Vehicle No: $vehicleNo', style: const pw.TextStyle(fontSize: 12)),
+                          if (brand.isNotEmpty || model.isNotEmpty)
+                            pw.Text('Model: $brand $model', style: const pw.TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 16),
+
+              // Items Table
+              pw.Text('SERVICES & PACKAGES', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 8),
+              if (items.isNotEmpty)
+                pw.TableHelper.fromTextArray(
+                  headers: ['Item / Service', 'Qty', 'Amount'],
+                  data: items.map((item) {
+                    final text = item['text'] ?? item['name'] ?? '-';
+                    final qty = item['qty'] ?? 1;
+                    final amt = (item['amount'] as num? ?? 0).toDouble();
+                    return [text, '$qty', currency.format(amt)];
+                  }).toList(),
+                  headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white),
+                  headerDecoration: const pw.BoxDecoration(color: PdfColors.blue800),
+                  cellAlignment: pw.Alignment.centerLeft,
+                )
+              else
+                pw.Text('No items recorded.', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey600)),
+              pw.SizedBox(height: 16),
+
+              // Photos Section (Hide label for Courier, but show images)
+              if (fetchedPhotos.isNotEmpty) ...[
+                if (!isCourier) ...[
+                  pw.Text('VEHICLE PHOTOS', style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+                  pw.SizedBox(height: 8),
+                ],
+                pw.Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: fetchedPhotos.map((imgBytes) {
+                    return pw.Container(
+                      width: 160,
+                      height: 120,
+                      decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey400)),
+                      child: pw.Image(pw.MemoryImage(imgBytes), fit: pw.BoxFit.cover),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ];
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      final filename = 'JobCard_${jobIdStr}.pdf';
+      await Printing.sharePdf(bytes: bytes, filename: filename);
+    } catch (e) {
+      _showError('Error sharing Job Card PDF: $e');
     }
   }
 
@@ -1523,10 +2043,33 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
   void _showError(String message) {
     if (!mounted) return;
+    String displayMessage = message;
+    final lower = message.toLowerCase();
+    if (lower.contains('socketexception') ||
+        lower.contains('clientexception') ||
+        lower.contains('connection abort') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('network_error') ||
+        lower.contains('timeoutexception') ||
+        lower.contains('failed to connect')) {
+      displayMessage = '📶 No internet connection. Please check your network and try again.';
+    }
+
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: Colors.red,
-      duration: const Duration(seconds: 2),
+      content: Row(
+        children: [
+          const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              displayMessage,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+      backgroundColor: const Color(0xFFDC2626),
+      duration: const Duration(seconds: 4),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.borderRadiusLg)),
@@ -1578,24 +2121,54 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         final unassignedJobs = reportProvider.unassignedReports;
         final allReports = reportProvider.reports;
 
+        bool isCourierJob(Map<String, dynamic> r) {
+          final marks = r['marks'];
+          if (marks == null) return false;
+          if (marks is String) {
+            try {
+              final map = jsonDecode(marks);
+              return map['is_courier'] == true;
+            } catch (_) {}
+          } else if (marks is Map) {
+            return marks['is_courier'] == true;
+          }
+          return false;
+        }
+
+        bool isVehicleRegistrationDraft(Map<String, dynamic> r) {
+          final marks = r['marks'];
+          if (marks == null) return false;
+          if (marks is String) {
+            try {
+              final map = jsonDecode(marks);
+              return map['is_vehicle_registration_draft'] == true;
+            } catch (_) {}
+          } else if (marks is Map) {
+            return marks['is_vehicle_registration_draft'] == true;
+          }
+          return false;
+        }
+
+        final courierJobs = allReports.where(isCourierJob).toList();
+
         final draftJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusDraft)
+            .where((r) => r['status'] == AppConstants.statusDraft && !isCourierJob(r) && !isVehicleRegistrationDraft(r))
             .toList();
 
         final pendingJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled)
+            .where((r) => (r['status'] == AppConstants.statusNotStarted || r['status'] == AppConstants.statusWorkInProgress || r['status'] == AppConstants.statusCancelled) && !isCourierJob(r))
             .toList();
             
         final workInProgressJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusWorkInProgress)
+            .where((r) => r['status'] == AppConstants.statusWorkInProgress && !isCourierJob(r))
             .toList();
             
         final completedJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusCompleted)
+            .where((r) => r['status'] == AppConstants.statusCompleted && !isCourierJob(r))
             .toList();
             
         final cancelledJobs = allReports
-            .where((r) => r['status'] == AppConstants.statusCancelled)
+            .where((r) => r['status'] == AppConstants.statusCancelled && !isCourierJob(r))
             .toList();
             
         // Direct bookings tab removed per requirements
@@ -1707,10 +2280,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     List<Widget> tabs = [];
                     tabs.addAll([
                       _buildProfessionalTab('Drafts', draftJobs.length),
-                      _buildProfessionalTab('Jobs', pendingJobs.length),
                       _buildProfessionalTab('Work in Progress', workInProgressJobs.length),
-                      _buildProfessionalTab('Completed', completedJobs.length),
-                      _buildProfessionalTab('Cancelled', cancelledJobs.length),
+                      _buildProfessionalTab('Couriers', courierJobs.length),
                     ]);
                     
                     return TabBar(
@@ -1727,8 +2298,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       ),
-                      isScrollable: false,
-                      labelPadding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      isScrollable: true,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 16.0),
                       tabs: tabs,
                     );
                   },
@@ -1746,10 +2317,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                       List<Widget> tabViews = [];
                       tabViews.addAll([
                         _buildJobList(draftJobs, 'No saved drafts.', 'Drafts'),
-                        _buildJobList(pendingJobs, 'No jobs are currently pending.', 'Jobs'),
                         _buildJobList(workInProgressJobs, 'No jobs currently in progress.', 'Work in Progress'),
-                        _buildJobList(completedJobs, 'No completed jobs.', 'Completed'),
-                        _buildJobList(cancelledJobs, 'No cancelled jobs.', 'Cancelled'),
+                        _buildJobList(courierJobs, 'No courier jobs.', 'Couriers'),
                       ]);
                       
                       return TabBarView(
@@ -1769,10 +2338,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
   String _formatDuration(String? start, String? end) {
     if (start == null) return '';
-    final startTime = DateTime.tryParse(start);
-    if (startTime == null) return '';
-
-    final endTime = (end != null ? DateTime.tryParse(end) : null) ?? DateTime.now();
+    final startTime = AppDateUtils.parseUtcToLocal(start);
+    final endTime = end != null ? AppDateUtils.parseUtcToLocal(end) : DateTime.now();
     final duration = endTime.difference(startTime);
     
     if (duration.inMinutes < 60) {
@@ -1901,11 +2468,28 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
         itemCount: jobs.length,
         itemBuilder: (context, index) {
           final job = jobs[index];
-          final vehicleNo = job['vehicles']?['Vehicle Number'] ?? 'N/A';
           final brandModel = _getBrandModel(job);
           final approvedList = _safeJsonDecodeList(job['approved']);
           final suggestedList = _safeJsonDecodeList(job['suggested']);
           final technicianAssignments = _safeJsonDecodeList(job['technician_assignments']);
+          
+          bool isCourier = false;
+          Map<String, dynamic> marksMap = {};
+          final marksRaw = job['marks'];
+          if (marksRaw != null) {
+            if (marksRaw is Map) {
+              marksMap = Map<String, dynamic>.from(marksRaw);
+              isCourier = marksMap['is_courier'] == true;
+            } else if (marksRaw is String) {
+              try {
+                marksMap = Map<String, dynamic>.from(jsonDecode(marksRaw));
+                isCourier = marksMap['is_courier'] == true;
+              } catch (_) {}
+            }
+          }
+          
+          final String vNo = (job['vehicles']?['Vehicle Number'] ?? marksMap['vehicle_number'] ?? job['Vehicle Number'] ?? '').toString().trim();
+          final String vehicleNo = vNo.isNotEmpty ? vNo : 'N/A';
           
           // Debug: Check if source fields are present
           if (kDebugMode) {
@@ -1915,26 +2499,40 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           bool isOverdue = false;
           int overdueBy = 0;
           String overdueText = '';
-          if (job['status'] == AppConstants.statusWorkInProgress && job['started_at'] != null) {
-            final startTime = DateTime.tryParse(job['started_at']);
-            if (startTime != null) {
-              final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
-              final int threshold = adminSettings.overdueMinutesThreshold;
-              final minutesRunning = DateTime.now().difference(startTime).inMinutes;
+          if (!isCourier && job['status'] == AppConstants.statusWorkInProgress && job['started_at'] != null) {
+            final startTime = AppDateUtils.parseUtcToLocal(job['started_at']);
+            final adminSettings = Provider.of<AdminSettingsProvider>(context, listen: false);
+            final int threshold = adminSettings.overdueMinutesThreshold;
+            final minutesRunning = DateTime.now().difference(startTime).inMinutes;
+            if (minutesRunning > threshold) {
+              isOverdue = true;
+              overdueBy = minutesRunning - threshold;
               
-              if (minutesRunning > threshold) {
-                isOverdue = true;
-                overdueBy = minutesRunning - threshold;
-                
-                if (overdueBy >= 60) {
-                  final hrs = overdueBy ~/ 60;
-                  final mins = overdueBy % 60;
-                  overdueText = mins > 0 ? '$hrs hr $mins min' : '$hrs hr${hrs == 1 ? '' : 's'}';
-                } else {
-                  overdueText = '$overdueBy min';
-                }
+              if (overdueBy >= 60) {
+                final hrs = overdueBy ~/ 60;
+                final mins = overdueBy % 60;
+                overdueText = mins > 0 ? '$hrs hr $mins min' : '$hrs hr${hrs == 1 ? '' : 's'}';
+              } else {
+                overdueText = '$overdueBy min';
               }
             }
+          }
+          
+          String getCreatorName() {
+            if (job['executive'] != null && job['executive']['username'] != null) {
+              return job['executive']['username'];
+            }
+            if (job['created_by_pudo'] != null && job['created_by_pudo']['username'] != null) {
+              return job['created_by_pudo']['username'];
+            }
+            return 'User';
+          }
+
+          String formattedDate = '';
+          if (job['created_at'] != null) {
+            try {
+              formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(job['created_at']));
+            } catch (_) {}
           }
 
           return AnimationConfiguration.staggeredList(
@@ -1995,8 +2593,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             color: const Color(0xFFDEEBFF),
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(
-                            Icons.directions_car_rounded,
+                          child: Icon(
+                            isCourier ? Icons.inventory_2_outlined : Icons.directions_car_rounded,
                             color: AppTheme.primaryColor,
                             size: 28,
                           ),
@@ -2063,16 +2661,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       ),
                                     ),
                                   
-                                  if (job['status'] == AppConstants.statusCancelled)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFFFEE2E2),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: const Color(0xFFFCA5A5)),
-                                      ),
-                                      child: const Text('Cancelled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFB91C1C))),
-                                    ),
+
                                   if (job['status'] == AppConstants.statusDraft)
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2107,15 +2696,61 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                     ),
                                 ],
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                brandModel.isNotEmpty ? brandModel : 'Vehicle',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Color(0xFF6B7280),
-                                  fontWeight: FontWeight.w500,
+                              if (isCourier) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Created: $formattedDate by ${getCreatorName()}',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFF6B7280),
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
-                              ),
+                              ] else ...[
+                                if (vNo.isNotEmpty && vNo != 'N/A') ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    vNo,
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: AppTheme.textPrimary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                                if (brandModel.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    brandModel,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Color(0xFF6B7280),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                              if (job['status'] == AppConstants.statusDraft && formattedDate.isNotEmpty) ...[
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.access_time_rounded, size: 14, color: Color(0xFF6B7280)),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        'Draft Created: $formattedDate',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF4B5563),
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 1,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                               if (technicianAssignments.isNotEmpty) ...[
                                 const SizedBox(height: 8),
                                 ...technicianAssignments.map((assignment) {
@@ -2151,7 +2786,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   );
                                 }).toList(),
                               ],
-                              if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
+                              if (!isCourier && job['started_at'] != null && job['status'] != AppConstants.statusCancelled && job['status'] != AppConstants.statusDraft) ...[
                                 const SizedBox(height: 6),
                                 Row(
                                   children: [
@@ -2173,28 +2808,83 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             ],
                           ),
                         ),
-                        if (job['status'] != AppConstants.statusCompleted && job['status'] != AppConstants.statusCancelled)
-                          PopupMenuButton<String>(
-                            icon: const Icon(
-                              Icons.more_vert,
-                              color: AppTheme.textSecondary,
-                              size: 24,
+                        PopupMenuButton<String>(
+                          icon: const Icon(
+                            Icons.more_vert,
+                            color: AppTheme.textSecondary,
+                            size: 24,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 4,
+                          onSelected: (value) {
+                            if (value == 'edit_jobcard') {
+                              HapticUtils.medium();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => JobCardScreen(draftJob: job),
+                                ),
+                              ).then((_) {
+                                final user = Provider.of<UserProvider>(context, listen: false).user;
+                                if (user != null && mounted) {
+                                  Provider.of<ReportProvider>(context, listen: false)
+                                      .refresh(user['id'] as int, isAdminMode: widget.isAdminMode);
+                                }
+                              });
+                            } else if (value == 'cancel') {
+                              HapticUtils.medium();
+                              _openCancelModal(job['id'], vehicleNo);
+                            } else if (value == 'delete_draft') {
+                              HapticUtils.medium();
+                              _confirmDeleteDraft(job['id'], vehicleNo);
+                            } else if (value == 'share_warranty') {
+                              HapticUtils.light();
+                              _shareWarrantyPDFForJob(job);
+                            } else if (value == 'share_jobcard') {
+                              HapticUtils.light();
+                              _shareJobCardPDF(job);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            // ✅ Edit Job Card — for Work in Progress or Draft status jobs
+                            if (job['status'] == AppConstants.statusWorkInProgress || job['status'] == AppConstants.statusDraft)
+                              const PopupMenuItem<String>(
+                                value: 'edit_jobcard',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit_note_rounded, color: AppTheme.primaryColor, size: 20),
+                                    SizedBox(width: 12),
+                                    Text('Edit Job Card', style: TextStyle(fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                            const PopupMenuItem<String>(
+                              value: 'share_warranty',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.qr_code, color: Colors.blue, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('Share Warranty Details', style: TextStyle(fontWeight: FontWeight.w600)),
+                                ],
+                              ),
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            const PopupMenuItem<String>(
+                              value: 'share_jobcard',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.assignment_outlined, color: Colors.indigo, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('Share Job Card', style: TextStyle(fontWeight: FontWeight.w600)),
+                                ],
+                              ),
                             ),
-                            elevation: 4,
-                            onSelected: (value) {
-                              if (value == 'cancel') {
-                                HapticUtils.medium();
-                                _openCancelModal(job['id'], vehicleNo);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem<String>(
+                            if (job['status'] != AppConstants.statusCompleted && job['status'] != AppConstants.statusCancelled)
+                              const PopupMenuItem<String>(
                                 value: 'cancel',
                                 child: Row(
-                                  children: const [
+                                  children: [
                                     Icon(
                                       Icons.cancel_outlined,
                                       color: Colors.red,
@@ -2211,8 +2901,26 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
+                            // ✅ Delete Draft — only visible for Draft status jobs
+                            if (job['status'] == AppConstants.statusDraft)
+                              const PopupMenuItem<String>(
+                                value: 'delete_draft',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete_forever_rounded, color: Color(0xFFDC2626), size: 20),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'Delete Draft',
+                                      style: TextStyle(
+                                        color: Color(0xFFDC2626),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -2351,7 +3059,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                         color: Color(0xFF9CA3AF),
                                       ),
                                     ),
-                                  if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled) ...[
+                                  if (job['started_at'] != null && job['status'] != AppConstants.statusCancelled && job['status'] != AppConstants.statusDraft) ...[
                                     const SizedBox(height: 6),
                                     Row(
                                       children: [
@@ -2733,7 +3441,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
                           // ✅ ADD: Switch to Pending tab and show success
                           if (context.mounted) {
-                            _tabController.animateTo(0); // Switch to Work in Progress tab
+                            _tabController.animateTo(1); // Switch to Work in Progress tab
                             // Commented out to reduce UI noise
                             // ScaffoldMessenger.of(context).showSnackBar(
                             //   const SnackBar(
@@ -2779,7 +3487,8 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
     final reportProvider = Provider.of<ReportProvider>(context, listen: false);
     final currentJob = reportProvider.reports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => reportProvider.unassignedReports.firstWhere((r) => r['id'] == _currentReportId, orElse: () => <String, dynamic>{}));
     final bool isCancelled = currentJob['status'] == AppConstants.statusCancelled;
-    final bool isEditable = _openedFromTab == 'Jobs' && !isCancelled;
+    final bool isEditable = _openedFromTab != 'Completed' && _openedFromTab != 'Completed Jobs' && !isCancelled;
+    final bool isCourier = _currentVehicleNo == 'Courier Package';
 
     if (kDebugMode) {
       debugPrint('--- _buildUpdateForm Visibility Check ---');
@@ -2793,19 +3502,11 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       debugPrint('Form visible: $_showUpdateForm');
       debugPrint('---------------------------------------');
     }
-    bool hasQr = false;
-    try {
-      final String combinedBarcode = _scannedBarcodeText ?? _barcodeController.text;
-      if (combinedBarcode.isNotEmpty && combinedBarcode.startsWith('{')) {
-        final Map<String, dynamic> barcodeData = jsonDecode(combinedBarcode);
-        hasQr = barcodeData.values.any((details) {
-          if (details is Map) {
-            return details['qr']?.toString().isNotEmpty == true || details['has_image']?.toString() == 'true';
-          }
-          return false;
-        });
-      }
-    } catch (_) {}
+    final bool hasBarcodeOrQrImages = (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText != '{}') ||
+        _scannedBarcodeImageUrl != null ||
+        (_barcodeController.text.isNotEmpty && _barcodeController.text != '{}') ||
+        _jobMediaUrls.any((url) => url.contains('_tyreqr_') || url.contains('_barcode_'));
+    bool hasQr = hasBarcodeOrQrImages;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -2824,12 +3525,48 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           tooltip: 'Close Form',
         ),
         actions: [
-          if (hasQr)
-            IconButton(
-              icon: const Icon(Icons.share, color: AppTheme.primaryColor),
-              onPressed: _shareWarrantyPDF,
-              tooltip: 'Share QRs',
-            ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.share, color: AppTheme.primaryColor),
+            tooltip: 'Share Options',
+            onSelected: (val) {
+              final reportProvider = Provider.of<ReportProvider>(context, listen: false);
+              final currentJob = reportProvider.reports.firstWhere(
+                (r) => r['id'] == _currentReportId,
+                orElse: () => reportProvider.unassignedReports.firstWhere(
+                  (r) => r['id'] == _currentReportId,
+                  orElse: () => <String, dynamic>{'id': _currentReportId},
+                ),
+              );
+              if (val == 'share_warranty') {
+                _shareWarrantyPDF();
+              } else if (val == 'share_jobcard') {
+                _shareJobCardPDF(currentJob);
+              }
+            },
+            itemBuilder: (context) => [
+              if (hasQr)
+                const PopupMenuItem<String>(
+                  value: 'share_warranty',
+                  child: Row(
+                    children: [
+                      Icon(Icons.qr_code, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Text('Share Warranty Details'),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem<String>(
+                value: 'share_jobcard',
+                child: Row(
+                  children: [
+                    Icon(Icons.assignment_outlined, color: Colors.indigo, size: 20),
+                    SizedBox(width: 8),
+                    Text('Share Job Card'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
         backgroundColor: Colors.white,
         elevation: 0,
@@ -2902,33 +3639,34 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         ],
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            '${_originalComplaints.length}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
+                    if (!isCourier)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(
+                              '${_originalComplaints.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Issues',
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.8),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
+                            Text(
+                              'Issues',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.8),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -3074,7 +3812,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                       _buildInfoRow(
                         'Scheduled',
                         DateFormat('dd MMM yyyy, hh:mm a').format(
-                            DateTime.parse(_currentBookingData!['scheduled_time'])
+                            AppDateUtils.parseUtcToLocal(_currentBookingData!['scheduled_time'])
                         ),
                         Icons.schedule,
                       ),
@@ -3085,7 +3823,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
           
           if (_currentBookingData != null) const SizedBox(height: 16),
           
-          if (_currentStartedAt != null && _currentStatus != AppConstants.statusDraft)
+          if (!isCourier && _currentStartedAt != null && _currentStatus != AppConstants.statusDraft)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -3130,52 +3868,113 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                       ],
                     ),
                     const SizedBox(height: 16),
-                    _buildInfoRow(
-                      'Started At',
-                      DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(_currentStartedAt!).toLocal()),
-                      Icons.play_circle_outline,
-                    ),
+                    if (isCourier)
+                      _buildInfoRow(
+                        'Created At',
+                        DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(_currentCreatedAt!)),
+                        Icons.add_circle_outline,
+                      )
+                    else
+                      _buildInfoRow(
+                        'Started At',
+                        DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(_currentStartedAt!)),
+                        Icons.play_circle_outline,
+                      ),
+                    
                     if (_currentCompletedAt != null)
                       _buildInfoRow(
                         'Completed At',
-                        DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(_currentCompletedAt!).toLocal()),
+                        DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(_currentCompletedAt!)),
                         Icons.stop_circle_outlined,
                       ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF59E0B).withValues(alpha: 0.05),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.2)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Total Duration:',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF6B7280),
+                      
+                    if (!isCourier) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.05),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.2)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total Duration:',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF6B7280),
+                              ),
                             ),
-                          ),
-                          if (_currentStartedAt != null)
-                            LiveTimer(
-                              startTime: DateTime.tryParse(_currentStartedAt!) ?? DateTime.now(),
-                              endTime: _currentCompletedAt != null ? DateTime.tryParse(_currentCompletedAt!) : null,
-                            )
-                          else
-                            const Text('-'),
-                        ],
+                            if (_currentStartedAt != null)
+                              LiveTimer(
+                                startTime: AppDateUtils.parseUtcToLocal(_currentStartedAt!),
+                                endTime: _currentCompletedAt != null ? AppDateUtils.parseUtcToLocal(_currentCompletedAt!) : null,
+                              )
+                            else
+                              const Text('-'),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
             ),
 
-          if (_currentStartedAt != null && _currentStatus != AppConstants.statusDraft) const SizedBox(height: 16),
+          if (!isCourier && _currentStartedAt != null && _currentStatus != AppConstants.statusDraft) const SizedBox(height: 16),
+          
+          if (isCourier) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, 2)),
+                  ],
+                ),
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.local_shipping_outlined, color: AppTheme.primaryColor, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Delivery Details',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (_currentCreatedAt != null)
+                      _buildInfoRow('Created At', DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(_currentCreatedAt!)), Icons.calendar_today_outlined),
+                    _buildInfoRow('Customer Name', _currentCustomerName ?? 'N/A', Icons.person_outline),
+                    _buildInfoRow('Phone Number', _currentCustomerPhone ?? 'N/A', Icons.phone_outlined),
+                    _buildInfoRow('Delivery Address', _currentCustomerAddress ?? 'N/A', Icons.location_on_outlined),
+                    if (_currentGstNo != null && _currentGstNo!.isNotEmpty)
+                      _buildInfoRow('GST Number', _currentGstNo!, Icons.receipt_long_outlined),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
 
 
           // Customer Approved Services Section
@@ -3338,7 +4137,154 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
           // Step 1: Customer Complaints Section
           if (!_hasCustomerApproval) ...[
-            Padding(
+            if (isCourier)
+              // Courier Packages list
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Center(
+                              child: Icon(Icons.inventory_2, color: Colors.white, size: 18),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'Package Items',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      if (_currentMarks != null && _currentMarks!['products'] != null)
+                        ...(_currentMarks!['products'] as List).map((product) {
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF9FAFB),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        product['name']?.toString() ?? 'Unknown Item',
+                                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: AppTheme.textPrimary),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Brand: ${product['brand'] ?? 'N/A'} | Size: ${product['size'] ?? 'N/A'}',
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                                      ),
+                                      if (product['model'] != null && product['model'].toString().isNotEmpty)
+                                        Text(
+                                          'Model: ${product['model']}',
+                                          style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Builder(builder: (context) {
+                                  final qty = (product['qty'] ?? 1) as num;
+                                  final unitPrice = ((product['price'] ?? product['amount'] ?? 0) as num).toDouble();
+                                  final lineTotal = unitPrice * qty;
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                        '₹${lineTotal.toStringAsFixed(0)}',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.primaryColor),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Qty: $qty × ₹${unitPrice.toStringAsFixed(0)}',
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                                      ),
+                                    ],
+                                  );
+                                }),
+                              ],
+                            ),
+                          );
+                        })
+                      else
+                        const Text('No items found.', style: TextStyle(color: Colors.grey)),
+
+                        if (_currentDiscountAmount != null && _currentDiscountAmount! > 0)
+                          Builder(builder: (context) {
+                            double subtotal = 0.0;
+                            if (_currentMarks != null && _currentMarks!['products'] != null) {
+                              for (var product in _currentMarks!['products']) {
+                                subtotal += (double.tryParse(product['price']?.toString() ?? '0') ?? 0.0) * (int.tryParse(product['qty']?.toString() ?? '1') ?? 1);
+                              }
+                            }
+                            final calcDiscount = _currentDiscountType == 'percent'
+                                ? subtotal * (_currentDiscountAmount! / 100)
+                                : _currentDiscountAmount!;
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Column(
+                                children: [
+                                  const Divider(height: 1),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        _currentDiscountType == 'percent' ? 'Discount (${_currentDiscountAmount!.toStringAsFixed(0)}% Off)' : 'Discount',
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.red),
+                                      ),
+                                      Text(
+                                        '- ₹${calcDiscount.toStringAsFixed(0)}',
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.red),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                    ],
+                  ),
+                ),
+              )
+            else
+              // Existing Works list
+              Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
                 decoration: BoxDecoration(
@@ -3830,105 +4776,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
             const SizedBox(height: 16),
           ],
 
-          // Labour Cost Card (Above Summary)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Container(
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED), // Light orange/amber background
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFED7AA), width: 1.5),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.orange.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFED7AA),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.engineering_outlined,
-                          color: Color(0xFFEA580C),
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Labour Charges',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF9A3412),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (isEditable)
-                    TextField(
-                      controller: _laborCostController,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                        color: Color(0xFF9A3412),
-                      ),
-                      decoration: InputDecoration(
-                        prefixText: '₹ ',
-                        prefixStyle: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 16,
-                          color: Color(0xFF9A3412),
-                        ),
-                        hintText: '0',
-                        hintStyle: const TextStyle(color: Color(0xFFC2410C)),
-                        isDense: true,
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Color(0xFFFED7AA)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Color(0xFFFED7AA)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Color(0xFFEA580C), width: 2),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      ),
-                      onChanged: (value) {
-                        setState(() {});
-                      },
-                    )
-                  else
-                    Text(
-                      '₹${_laborCostController.text.isEmpty ? '0' : _laborCostController.text}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 20,
-                        color: Color(0xFF9A3412),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
+
 
           // Step 3: Summary & Delivery Section
           Padding(
@@ -4000,14 +4848,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(Icons.account_balance_wallet_outlined, color: AppTheme.primaryColor, size: 24),
-                            SizedBox(width: 12),
+                            const Icon(Icons.account_balance_wallet_outlined, color: AppTheme.primaryColor, size: 24),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                'Approximate service amount',
-                                style: TextStyle(
+                                isCourier ? 'Total Package Value' : 'Approximate service amount',
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   fontSize: 15,
                                   color: AppTheme.textPrimary,
@@ -4058,9 +4906,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Barcode Section
-                          const Padding(
-                            padding: EdgeInsets.only(bottom: 8.0),
-                            child: Text('Scanned Barcode', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Text(isCourier ? 'Tracking Barcode' : 'Scanned Barcode', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           ),
                           if ((_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText != '{}') || _scannedBarcodeImageUrl != null) ...[
                             if (_scannedBarcodeText != null && _scannedBarcodeText!.isNotEmpty && _scannedBarcodeText != '{}')
@@ -4128,13 +4976,14 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                               ),
                             const Divider(),
                             const SizedBox(height: 8),
-                          ] else ...[
+                          ],
+                          if (!hasBarcodeOrQrImages) ...[
                             const Padding(
                               padding: EdgeInsets.only(bottom: 16.0),
                               child: Text('no qr/barcode scanned', style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
                             ),
                           ],
-                          if (isEditable && (_scannedBarcodeText == null || _scannedBarcodeText!.isEmpty || _scannedBarcodeText == '{}') && _scannedBarcodeImageUrl == null && _barcodeController.text.isEmpty && _barcodeController.text != '{}') ...[
+                          if (isEditable && !hasBarcodeOrQrImages) ...[
                             Padding(
                               padding: const EdgeInsets.only(bottom: 16),
                               child: InkWell(
@@ -4166,7 +5015,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                             ),
                             const Divider(),
                             const SizedBox(height: 8),
-                          ] else if ((_scannedBarcodeText == null || _scannedBarcodeText!.isEmpty || _scannedBarcodeText == '{}') && _scannedBarcodeImageUrl == null && _barcodeController.text.isEmpty && _barcodeController.text != '{}') ...[
+                          ] else if (!hasBarcodeOrQrImages) ...[
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                               margin: const EdgeInsets.only(bottom: 16),
@@ -4207,9 +5056,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     if (qrUrls.isNotEmpty) ...[
-                                      const Padding(
-                                        padding: EdgeInsets.only(bottom: 8.0),
-                                        child: Text('Scanned Tyre QRs', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(isCourier ? 'Package Photos' : 'Scanned Tyre QRs', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
                                       Wrap(
                                         spacing: 8,
@@ -4222,7 +5071,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       const Padding(
                                         padding: EdgeInsets.only(bottom: 8.0),
                                         child: Text('Wheel Images', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                                      ),
+),
                                       Wrap(
                                         spacing: 8,
                                         runSpacing: 8,
@@ -4231,9 +5080,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       const SizedBox(height: 16),
                                     ],
                                     if (vehicleUrls.isNotEmpty) ...[
-                                      const Padding(
-                                        padding: EdgeInsets.only(bottom: 8.0),
-                                        child: Text('Vehicle Overall Photos', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(isCourier ? 'Package & Item Photos' : 'Vehicle Overall Photos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
                                       Wrap(
                                         spacing: 8,
@@ -4242,7 +5091,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                       ),
                                       const SizedBox(height: 16),
                                     ],
-                                    if (odometerUrls.isNotEmpty) ...[
+                                    if (!isCourier && odometerUrls.isNotEmpty) ...[
                                       const Padding(
                                         padding: EdgeInsets.only(bottom: 8.0),
                                         child: Text('Odometer Image', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -4257,7 +5106,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                     if (otherUrls.isNotEmpty) ...[
                                       Padding(
                                         padding: const EdgeInsets.only(bottom: 8.0),
-                                        child: Text(_openedFromTab == 'Completed Jobs' && _afterJobMediaUrls.isNotEmpty ? 'Before Job Pictures' : 'Other Photos', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                        child: Text(_openedFromTab == 'Completed Jobs' && _afterJobMediaUrls.isNotEmpty ? (isCourier ? 'Initial Package Pictures' : 'Before Job Pictures') : (isCourier ? 'Package Photos' : 'Other Photos'), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
                                       Wrap(
                                         spacing: 8,
@@ -4268,9 +5117,9 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
                                     ],
                                     // After Images
                                     if (_afterJobMediaUrls.isNotEmpty) ...[
-                                      const Padding(
-                                        padding: EdgeInsets.only(bottom: 8.0),
-                                        child: Text('After Job Pictures', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(isCourier ? 'Delivery / Dispatch Photos' : 'After Job Pictures', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                       ),
                                       Wrap(
                                         spacing: 8,

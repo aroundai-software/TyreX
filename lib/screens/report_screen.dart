@@ -21,6 +21,9 @@ import '../providers/report_provider.dart';
 import '../providers/admin_settings_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../services/local_media_service.dart';
+import '../utils/app_constants.dart';
+import '../utils/date_utils.dart';
+import '../services/company_service.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 
@@ -149,7 +152,7 @@ class _ReportScreenState extends State<ReportScreen> {
     if (_fromDate != null) {
       filtered = filtered
           .where((report) =>
-              !DateTime.parse(report['created_at']).isBefore(_fromDate!))
+              !AppDateUtils.parseUtcToLocal(report['created_at']).isBefore(_fromDate!))
           .toList();
     }
     if (_toDate != null) {
@@ -157,7 +160,7 @@ class _ReportScreenState extends State<ReportScreen> {
           DateTime(_toDate!.year, _toDate!.month, _toDate!.day, 23, 59, 59);
       filtered = filtered
           .where((report) =>
-              !DateTime.parse(report['created_at']).isAfter(endOfDay))
+              !AppDateUtils.parseUtcToLocal(report['created_at']).isAfter(endOfDay))
           .toList();
     }
     setState(() => _filteredReports = filtered);
@@ -247,7 +250,7 @@ class _ReportScreenState extends State<ReportScreen> {
       final model = vehicle?['vehicle_models'];
       rows.add([
         DateFormat('dd-MM-yyyy HH:mm')
-            .format(DateTime.parse(report['created_at'])),
+            .format(AppDateUtils.parseUtcToLocal(report['created_at'])),
         vehicle?['Vehicle Number'] ?? 'N/A',
         vehicle?['vehicle_name'] ?? 'N/A',
         model?['brand'] ?? 'N/A',
@@ -478,6 +481,23 @@ class _ReportScreenState extends State<ReportScreen> {
     //     SnackBar(content: Text(message), backgroundColor: Colors.green));
   }
 
+  bool _isCourierJob(Map<String, dynamic> report) {
+    final vehicle = report['vehicles'];
+    if (vehicle != null && vehicle['Vehicle Number'] == 'Courier Package') {
+      return true;
+    }
+    final marks = report['marks'];
+    if (marks is Map && marks['is_courier'] == true) {
+      return true;
+    } else if (marks is String && marks.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(marks);
+        if (decoded is Map && decoded['is_courier'] == true) return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
   Color _getStatusColor(String? status) {
     switch (status) {
       case 'Completed':
@@ -620,6 +640,18 @@ class _ReportScreenState extends State<ReportScreen> {
     final vehicleNo = vehicle?['Vehicle Number'] ?? 'N/A';
     final clientName = report['Owner name'] ?? 'N/A';
     final clientPhone = report['client_phone'] ?? 'N/A';
+    final odo = (report['odometer_reading'] ?? vehicle?['Odometer Reading'] ?? '').toString().trim();
+
+    Map<String, dynamic> rMarksMap = {};
+    final rMarksRaw = report['marks'];
+    if (rMarksRaw != null) {
+      if (rMarksRaw is Map) {
+        rMarksMap = Map<String, dynamic>.from(rMarksRaw);
+      } else if (rMarksRaw is String) {
+        try { rMarksMap = Map<String, dynamic>.from(jsonDecode(rMarksRaw)); } catch (_) {}
+      }
+    }
+    final String rAddress = (rMarksMap['address'] ?? report['address'] ?? report['bookings']?['pickup_address'] ?? '').toString().trim();
 
     try {
       final pdf = pw.Document();
@@ -635,8 +667,14 @@ class _ReportScreenState extends State<ReportScreen> {
               ),
               pw.SizedBox(height: 10),
               pw.Text('Job Card: $jobIdStr', style: const pw.TextStyle(fontSize: 16)),
-              pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+              if (vehicleNo.isNotEmpty && vehicleNo != 'Courier Package' && vehicleNo != 'N/A') ...[
+                pw.Text('Vehicle: $vehicleNo', style: const pw.TextStyle(fontSize: 16)),
+                if (odo.isNotEmpty && odo != 'N/A')
+                  pw.Text('Odometer Reading: $odo km', style: const pw.TextStyle(fontSize: 16)),
+              ],
               pw.Text('Client: $clientName ($clientPhone)', style: const pw.TextStyle(fontSize: 16)),
+              if (rAddress.isNotEmpty && rAddress != 'N/A')
+                pw.Text('Address: $rAddress', style: const pw.TextStyle(fontSize: 16)),
               pw.SizedBox(height: 20),
               pw.Wrap(
                 spacing: 20,
@@ -714,6 +752,14 @@ class _ReportScreenState extends State<ReportScreen> {
           });
         }
 
+        final bool hasActiveFilters = _fromDate != null ||
+            _toDate != null ||
+            _vehicleNoController.text.isNotEmpty ||
+            _brandController.text.isNotEmpty;
+
+        final reportsToDisplay =
+            hasActiveFilters ? _filteredReports : reportProvider.reports;
+
         return Scaffold(
           backgroundColor: const Color(0xFFF5F7FA),
           appBar: AppBar(
@@ -761,19 +807,18 @@ class _ReportScreenState extends State<ReportScreen> {
                   child: CustomScrollView(
                     slivers: [
                       SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
+                        padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 8.0),
                         sliver: SliverToBoxAdapter(
-                          child: _buildFilterCard(), // Filters remain at the top
+                          child: _buildFilterCard(),
                         ),
                       ),
                       SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 4.0).copyWith(bottom: 16),
-                        sliver: SliverFillRemaining(
-                          hasScrollBody: true,
+                        sliver: SliverToBoxAdapter(
                           child: _buildServiceHistoryCard(
                             isLoading: reportProvider.isLoading &&
                                 reportProvider.reports.isEmpty,
-                            filteredReports: _filteredReports,
+                            filteredReports: reportsToDisplay,
                           ),
                         ),
                       ),
@@ -789,55 +834,115 @@ class _ReportScreenState extends State<ReportScreen> {
   }
 
   Widget _buildFilterCard() {
+    final bool hasActiveFilters = _fromDate != null ||
+        _toDate != null ||
+        _vehicleNoController.text.isNotEmpty ||
+        _brandController.text.isNotEmpty;
+
     return AppCard(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Filter Reports',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Filter Reports',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+              if (hasActiveFilters)
+                InkWell(
+                  onTap: _clearFilters,
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.clear_all_rounded, size: 16, color: Colors.red),
+                        SizedBox(width: 4),
+                        Text(
+                          'Clear',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
                 child: TextField(
-                    controller: _fromDateController,
-                    decoration: const InputDecoration(
-                        labelText: 'From Date',
-                        suffixIcon: Icon(Icons.calendar_today, size: 20)),
-                    readOnly: true,
-                    onTap: () => _selectDate(context, true))),
-            const SizedBox(width: 16),
-            Expanded(
+                  controller: _fromDateController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: 'From',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    suffixIcon: Icon(Icons.calendar_today, size: 16),
+                    suffixIconConstraints: BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                  readOnly: true,
+                  onTap: () => _selectDate(context, true),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
                 child: TextField(
-                    controller: _toDateController,
-                    decoration: const InputDecoration(
-                        labelText: 'To Date',
-                        suffixIcon: Icon(Icons.calendar_today, size: 20)),
-                    readOnly: true,
-                    onTap: () => _selectDate(context, false))),
-          ]),
-          const SizedBox(height: 16),
-          Row(children: [
-            Expanded(
+                  controller: _toDateController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: 'To',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    suffixIcon: Icon(Icons.calendar_today, size: 16),
+                    suffixIconConstraints: BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
+                  readOnly: true,
+                  onTap: () => _selectDate(context, false),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
                 child: TextField(
-                    controller: _vehicleNoController,
-                    decoration:
-                        const InputDecoration(labelText: 'Vehicle Number'),
-                    textCapitalization: TextCapitalization.characters,
-                    onChanged: (_) => _applyFilters())),
-            const SizedBox(width: 16),
-            Expanded(
+                  controller: _vehicleNoController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: 'Vehicle No',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: (_) => _applyFilters(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
                 child: TextField(
-                    controller: _brandController,
-                    decoration: const InputDecoration(labelText: 'Brand'),
-                    onChanged: (_) => _applyFilters())),
-          ]),
-          const SizedBox(height: 16),
-          SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                  onPressed: _clearFilters,
-                  child: const Text('Clear Filters'))),
+                  controller: _brandController,
+                  style: const TextStyle(fontSize: 13),
+                  decoration: const InputDecoration(
+                    labelText: 'Brand',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  ),
+                  onChanged: (_) => _applyFilters(),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -933,22 +1038,13 @@ class _ReportScreenState extends State<ReportScreen> {
                 
                 List<String> columnNames = columns.map((c) => (c.label as Text).data!).toList();
                 
-                final rows = List<DataRow>.generate(_filteredReports.length, (index) {
-                  final report = _filteredReports[index];
+                final rows = List<DataRow>.generate(filteredReports.length, (index) {
+                  final report = filteredReports[index];
                   final vehicle = report['vehicles'];
                   final model = vehicle?['vehicle_models'];
 
                   // Parse the date robustly and convert to local time (IST)
-                  String rawDate = report['created_at'].toString();
-                  // If Supabase returns UTC without timezone info, append 'Z' so Flutter knows it's UTC
-                  if (!rawDate.endsWith('Z') && !rawDate.contains('+') && !rawDate.contains('T')) {
-                    rawDate = '${rawDate.replaceAll(' ', 'T')}Z';
-                  } else if (!rawDate.endsWith('Z') && !rawDate.contains('+')) {
-                    rawDate = '${rawDate}Z';
-                  }
-                  
-                  final parsedDate = DateTime.tryParse(rawDate) ?? DateTime.now();
-                  final localDate = parsedDate.toLocal();
+                  final localDate = AppDateUtils.parseUtcToLocal(report['created_at'].toString());
 
                   // Build cells dynamically based on settings
                   List<DataCell> cells = [];
@@ -967,7 +1063,29 @@ class _ReportScreenState extends State<ReportScreen> {
                   
                   // Add all other cells
                   cells.addAll([
-                    DataCell(Text(report['job_card_id']?.toString() ?? 'Job #${report['id']}')),
+                    DataCell(
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(report['job_card_id']?.toString() ?? 'Job #${report['id']}'),
+                          if (_isCourierJob(report)) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: Colors.purple.shade50,
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.purple.shade200),
+                              ),
+                              child: const Text(
+                                'Courier',
+                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                     DataCell(Text(vehicle?['Vehicle Number'] ?? 'N/A')),
                     DataCell(Text(vehicle?['vehicle_name'] ?? 'N/A')),
                     DataCell(Text(model?['Model name'] ?? 'N/A')),
@@ -1025,10 +1143,11 @@ class _ReportScreenState extends State<ReportScreen> {
 
                 bool isMobile = MediaQuery.of(context).size.width < 600;
                 if (isMobile) {
-                  return _buildMobileReportsList(columnNames, rows, adminSettings);
+                  return _buildMobileReportsList(filteredReports, columnNames, rows, adminSettings);
                 }
                 
-                return Expanded(
+                return SizedBox(
+                  height: (filteredReports.length * 50 + 60).toDouble().clamp(300.0, 800.0),
                   child: DataTable2(
                     headingRowColor: WidgetStateProperty.all(Colors.grey.shade100),
                     columnSpacing: 12,
@@ -1069,66 +1188,110 @@ class _ReportScreenState extends State<ReportScreen> {
     return '$minutes min';
   }
 
-  Widget _buildMobileReportsList(List<String> columnNames, List<DataRow> rows, AdminSettingsProvider adminSettings) {
-    return Expanded(
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        itemCount: _filteredReports.length,
-        itemBuilder: (context, index) {
-          final report = _filteredReports[index];
-          final row = rows[index];
-          
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: InkWell(
-              onTap: () => _showMobileReportDetails(report, columnNames, row),
-              borderRadius: BorderRadius.circular(16),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          report['job_card_id']?.toString() ?? 'Job #${report['id']}',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+  Widget _buildMobileReportsList(List<Map<String, dynamic>> reports, List<String> columnNames, List<DataRow> rows, AdminSettingsProvider adminSettings) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: reports.length,
+      itemBuilder: (context, index) {
+        final report = reports[index];
+        final row = rows[index];
+        final createdDate = AppDateUtils.parseUtcToLocal(report['created_at']?.toString());
+        final formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(createdDate);
+        final isCourier = _isCourierJob(report);
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: InkWell(
+            onTap: () => _showMobileReportDetails(report, columnNames, row),
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                report['job_card_id']?.toString() ?? 'Job #${report['id']}',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isCourier) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.purple.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.purple.shade200),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.inventory_2_outlined, size: 12, color: Colors.purple),
+                                    SizedBox(width: 3),
+                                    Text(
+                                      'Courier',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.purple,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
-                        Chip(
-                          label: Text(
-                            report['status'] ?? 'N/A',
-                            style: const TextStyle(color: Colors.white, fontSize: 11),
-                          ),
-                          backgroundColor: _getStatusColor(report['status']),
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      const SizedBox(width: 8),
+                      Chip(
+                        label: Text(
+                          report['status'] ?? 'N/A',
+                          style: const TextStyle(color: Colors.white, fontSize: 11),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Client: ${report['Owner name']?.toString() ?? 'N/A'}',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
-                    ),
-                  ],
-                ),
+                        backgroundColor: _getStatusColor(report['status']),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Client: ${report['Owner name']?.toString() ?? 'N/A'}',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Date: $formattedDate',
+                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+                  ),
+                ],
               ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -1175,9 +1338,39 @@ class _ReportScreenState extends State<ReportScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      report['job_card_id']?.toString() ?? 'Job #${report['id']}',
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Text(
+                          report['job_card_id']?.toString() ?? 'Job #${report['id']}',
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                        if (_isCourierJob(report)) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.purple.shade200),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.inventory_2_outlined, size: 14, color: Colors.purple),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Courier Job',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.purple,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const Divider(height: 32),
                     Expanded(

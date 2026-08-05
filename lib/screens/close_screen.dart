@@ -57,7 +57,7 @@ class _CloseScreenState extends State<CloseScreen> {
     try {
       await supabase.from('reports').update({
         'status': 'Delivered',
-        'completed_at': DateTime.now().toIso8601String(),
+        'completed_at': DateTime.now().toUtc().toIso8601String(),
       }).eq('id', reportId);
 
       if (!mounted) return;

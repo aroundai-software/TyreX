@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../theme/app_theme.dart';
@@ -36,10 +37,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final supabase = Supabase.instance.client;
   
   // Metrics
-  int _totalUsers = 0;
-  int _activeReports = 0;
-  int _pendingApprovals = 0;
-  int _todayBookings = 0;
+  int _todayJobs = 0;
+  double _amountReceived = 0.0;
   bool _isLoadingMetrics = true;
 
   @override
@@ -51,34 +50,30 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<void> _loadMetrics() async {
     try {
       final String? companyName = CompanyService().companyName;
+      final todayStr = DateTime.now().toIso8601String().split('T')[0];
       
       // Build queries with company isolation
-      var usersQuery = supabase.from('users').select('id');
-      var activeReportsQuery = supabase.from('reports').select('id').neq('status', 'Completed');
-      var pendingQuery = supabase.from('reports').select('id').eq('status', 'Pending Approval');
-      var bookingsQuery = supabase.from('bookings').select('id').gte('created_at', DateTime.now().toIso8601String().split('T')[0]);
+      var jobsQuery = supabase.from('reports').select('id').gte('created_at', todayStr);
+      var paymentsQuery = supabase.from('payments').select('amount, reports!inner(company_name)').gte('paid_at', todayStr);
       
       // Apply company filter if available
       if (companyName != null && companyName.isNotEmpty) {
-        usersQuery = usersQuery.eq('company_name', companyName);
-        activeReportsQuery = activeReportsQuery.eq('company_name', companyName);
-        pendingQuery = pendingQuery.eq('company_name', companyName);
-        bookingsQuery = bookingsQuery.eq('company_name', companyName);
+        jobsQuery = jobsQuery.eq('company_name', companyName);
+        paymentsQuery = paymentsQuery.eq('reports.company_name', companyName);
       }
       
-      final results = await Future.wait([
-        usersQuery.count(),
-        activeReportsQuery.count(),
-        pendingQuery.count(),
-        bookingsQuery.count(),
-      ]);
+      final jobsResult = await jobsQuery.count();
+      final paymentsResult = await paymentsQuery;
+
+      double amountReceived = 0.0;
+      for (var p in paymentsResult as List<dynamic>) {
+        amountReceived += ((p as Map)['amount'] ?? 0.0) as num;
+      }
 
       if (mounted) {
         setState(() {
-          _totalUsers = results[0].count;
-          _activeReports = results[1].count;
-          _pendingApprovals = results[2].count;
-          _todayBookings = results[3].count;
+          _todayJobs = jobsResult.count;
+          _amountReceived = amountReceived;
           _isLoadingMetrics = false;
         });
       }
@@ -269,9 +264,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     child: Row(
                                       crossAxisAlignment: CrossAxisAlignment.stretch,
                                       children: [
-                                        Expanded(child: _buildMetricCard('Total Users', _totalUsers.toString(), Icons.people, Colors.blue)),
+                                        Expanded(child: _buildMetricCard('Total Jobs Today', _todayJobs.toString(), Icons.work, Colors.blue)),
                                         SizedBox(width: gap),
-                                        Expanded(child: _buildMetricCard('Active Job Cards', _activeReports.toString(), Icons.assignment, Colors.green)),
+                                        Expanded(child: _buildMetricCard('Amount Received Today', NumberFormat.currency(symbol: '₹', decimalDigits: 0).format(_amountReceived), Icons.currency_rupee, Colors.green)),
                                       ],
                                     ),
                                   )
@@ -281,9 +276,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                         child: Row(
                                           crossAxisAlignment: CrossAxisAlignment.stretch,
                                           children: [
-                                            Expanded(child: _buildMetricCard('Total Users', _totalUsers.toString(), Icons.people, Colors.blue)),
+                                            Expanded(child: _buildMetricCard('Total Jobs Today', _todayJobs.toString(), Icons.work, Colors.blue)),
                                             SizedBox(width: gap),
-                                            Expanded(child: _buildMetricCard('Active Job Cards', _activeReports.toString(), Icons.assignment, Colors.green)),
+                                            Expanded(child: _buildMetricCard('Amount Received Today', NumberFormat.currency(symbol: '₹', decimalDigits: 0).format(_amountReceived), Icons.currency_rupee, Colors.green)),
                                           ],
                                         ),
                                       ),

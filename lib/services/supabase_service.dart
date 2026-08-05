@@ -250,16 +250,17 @@ class SupabaseService {
       var query = _client
           .from('reports')
           .select('''
-            id, job_card_id, created_at, started_at, completed_at, status, complaint, suggested, approved,
+            id, vehicle_id, job_card_id, created_at, started_at, completed_at, status, complaint, suggested, approved,
             client_phone, odometer_reading, "Owner name",
             customer_feedback_text, customer_feedback_audio,
             marks, gdrive_folder_url, booking_id, created_by_pudo_id,
             inspection_remarks, barcode, photo_urls, after_photo_urls,
             vehicles!reports_vehicle_fk(
-              "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
+              id, "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
               vehicle_models!inner(brand, "Model name")
             ),
-            executive:executive_id(username)
+            executive:executive_id(username),
+            created_by_pudo:created_by_pudo_id(username)
           ''')
           .eq('executive_id', userId);
       
@@ -297,16 +298,17 @@ class SupabaseService {
       var query = _client
           .from('reports')
           .select('''
-            id, job_card_id, created_at, started_at, completed_at, status, complaint, suggested, approved,
+            id, vehicle_id, job_card_id, created_at, started_at, completed_at, status, complaint, suggested, approved,
             client_phone, odometer_reading, "Owner name",
             customer_feedback_text, customer_feedback_audio,
             marks, gdrive_folder_url, booking_id, created_by_pudo_id,
             inspection_remarks, barcode, photo_urls, after_photo_urls,
             vehicles!reports_vehicle_fk(
-              "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
+              id, "Guid", "Vehicle Number", vehicle_name, "Color", "Engine Number", "Chasis Number",
               vehicle_models!inner(brand, "Model name")
             ),
-            executive:executive_id(username)
+            executive:executive_id(username),
+            created_by_pudo:created_by_pudo_id(username)
           ''');
       
       if (companyName != null && companyName.isNotEmpty) {
@@ -338,10 +340,10 @@ class SupabaseService {
       final response = await _client
           .from('reports')
           .select('''
-          id, job_card_id, created_at, started_at, completed_at, status, complaint,
+          id, vehicle_id, job_card_id, created_at, started_at, completed_at, status, complaint,
           client_phone, odometer_reading, "Owner name", barcode, photo_urls, after_photo_urls,
           vehicles!reports_vehicle_fk(
-            "Guid", "Vehicle Number", vehicle_name,
+            id, "Guid", "Vehicle Number", vehicle_name,
             vehicle_models!inner(brand, "Model name")
           )
         ''')

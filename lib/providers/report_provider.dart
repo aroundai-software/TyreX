@@ -96,6 +96,16 @@ class ReportProvider extends ChangeNotifier {
     }
   }
 
+  /// Immediately remove a single report by ID from the in-memory list.
+  /// Call this right after a successful delete/cancel so the UI updates
+  /// instantly without waiting for a full network refresh.
+  void removeReportById(int reportId) {
+    _reports.removeWhere((r) => r['id'] == reportId);
+    _unassignedReports.removeWhere((r) => r['id'] == reportId);
+    notifyListeners();
+    debugPrint('🗑️ ReportProvider: Removed report $reportId from local list');
+  }
+
   /// Load more reports (pagination support for future)
   Future<void> loadMore(int userId) async {
     if (_isLoadingMore || !_hasMoreReports) return;

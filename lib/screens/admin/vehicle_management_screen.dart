@@ -15,9 +15,11 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
   final supabase = Supabase.instance.client;
   final _brandController = TextEditingController();
   final _modelController = TextEditingController();
+  final _searchController = TextEditingController();
 
   List<Map<String, dynamic>> _vehicleModels = [];
   bool _isLoading = false;
+  String _searchQuery = '';
 
   @override
   void initState() {
@@ -29,6 +31,7 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
   void dispose() {
     _brandController.dispose();
     _modelController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -183,166 +186,233 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
     );
   }
 
+  List<Map<String, dynamic>> get _filteredVehicles {
+    if (_searchQuery.isEmpty) return _vehicleModels;
+    final q = _searchQuery.toLowerCase();
+    return _vehicleModels.where((item) {
+      final brand = item['brand']?.toString().toLowerCase() ?? '';
+      final model = item['Model name']?.toString().toLowerCase() ?? '';
+      return brand.contains(q) || model.contains(q);
+    }).toList();
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0).copyWith(bottom: 12.0),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (value) => setState(() => _searchQuery = value),
+        decoration: InputDecoration(
+          hintText: 'Search by Brand or Model...',
+          prefixIcon: const Icon(Icons.search, color: AppTheme.primaryColor),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.grey),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final filteredVehicles = _filteredVehicles;
+
     return Scaffold(
-      backgroundColor:Colors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         title: const Text('Vehicle Management'),
         centerTitle: true,
+        backgroundColor: Colors.white,
+        elevation: 0,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Add Form
-            AppCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+      body: NestedScrollView(
+        headerSliverBuilder: (context, innerBoxIsScrolled) {
+          return [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.directions_car, color: Colors.blue, size: 20),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.directions_car, color: Colors.blue, size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Create New Vehicle',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Create New Vehicle',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                      const SizedBox(height: 16),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 600) {
+                            return Column(
+                              children: [
+                                TextField(
+                                  controller: _brandController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Brand *',
+                                    hintText: 'e.g., Maruti Suzuki',
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                TextField(
+                                  controller: _modelController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Model *',
+                                    hintText: 'e.g., Swift',
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _brandController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Brand *',
+                                    hintText: 'e.g., Maruti Suzuki',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: TextField(
+                                  controller: _modelController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Model *',
+                                    hintText: 'e.g., Swift',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton.icon(
+                          onPressed: _isLoading ? null : _addVehicleModel,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add Vehicle Model'),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      if (constraints.maxWidth < 600) {
-                        return Column(
-                          children: [
-                            TextField(
-                              controller: _brandController,
-                              decoration: const InputDecoration(
-                                labelText: 'Brand *',
-                                hintText: 'e.g., Maruti Suzuki',
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: _modelController,
-                              decoration: const InputDecoration(
-                                labelText: 'Model *',
-                                hintText: 'e.g., Swift',
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _brandController,
-                              decoration: const InputDecoration(
-                                labelText: 'Brand *',
-                                hintText: 'e.g., Maruti Suzuki',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: TextField(
-                              controller: _modelController,
-                              decoration: const InputDecoration(
-                                labelText: 'Model *',
-                                hintText: 'e.g., Swift',
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton.icon(
-                      onPressed: _isLoading ? null : _addVehicleModel,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Vehicle Model'),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-            const SizedBox(height: 16),
-
-            // List
-            Expanded(
-              child: AppCard(
-                padding: EdgeInsets.zero,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            SliverAppBar(
+              pinned: true,
+              floating: false,
+              automaticallyImplyLeading: false,
+              backgroundColor: const Color(0xFFF8FAFC),
+              surfaceTintColor: Colors.transparent,
+              elevation: innerBoxIsScrolled ? 2 : 0,
+              shadowColor: Colors.black12,
+              toolbarHeight: 50,
+              titleSpacing: 0,
+              title: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Row(
                   children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      children: [
-                        const Text(
-                          'Existing Vehicles',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '${_vehicleModels.length} total',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
+                    const Text(
+                      'Existing Vehicles',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
                     ),
-                  ),
-                  const Divider(height: 1),
-                  if (_isLoading)
-                    const Padding(
-                      padding: EdgeInsets.all(32.0),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (_vehicleModels.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(48.0),
-                      child: Center(
-                        child: Column(
-                          children: [
-                            Icon(Icons.directions_car, size: 48, color: Colors.grey.shade300),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'No vehicles yet',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: AppTheme.textPrimary,
-                              ),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300)
+                      ),
+                      child: Text(
+                        '${filteredVehicles.length} total',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(68),
+                child: _buildSearchBar(),
+              ),
+            ),
+          ];
+        },
+        body: Container(
+          margin: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: _isLoading && _vehicleModels.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : filteredVehicles.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.directions_car, size: 48, color: Colors.grey.shade300),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'No vehicles found',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.textPrimary,
                             ),
+                          ),
+                          if (_searchQuery.isEmpty) ...[
                             const SizedBox(height: 4),
                             const Text(
                               'Add your first vehicle model above.',
@@ -351,16 +421,15 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
                               ),
                             ),
                           ],
-                        ),
+                        ],
                       ),
                     )
-                  else
-                    Expanded(
-                      child: ListView.separated(
-                        itemCount: _vehicleModels.length,
-                        separatorBuilder: (context, index) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                        final item = _vehicleModels[index];
+                  : ListView.separated(
+                      padding: EdgeInsets.zero,
+                      itemCount: filteredVehicles.length,
+                      separatorBuilder: (context, index) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final item = filteredVehicles[index];
                         return Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           child: Row(
@@ -424,12 +493,6 @@ class _VehicleManagementScreenState extends State<VehicleManagementScreen> {
                         );
                       },
                     ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

@@ -7,10 +7,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/app_constants.dart';
+import '../../utils/date_utils.dart';
 import '../../providers/user_provider.dart';
 import '../../services/company_service.dart';
 import '../login_screen.dart';
 import 'invoice_detail_screen.dart';
+import 'payment_screen.dart';
 
 class AccountantDashboardScreen extends StatefulWidget {
   const AccountantDashboardScreen({super.key});
@@ -28,6 +30,13 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
   List<Map<String, dynamic>> _billed = [];
   List<Map<String, dynamic>> _paid = [];
   bool _isLoading = true;
+  DateTime? _selectedSingleDate;
+  DateTimeRange? _selectedCustomRange;
+  String _selectedFilter = 'Today';
+  final List<String> _filterOptions = ['Today', 'This Week', 'This Month', 'Custom Range', 'All Time'];
+  
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   // Metrics
   int _pendingCount = 0;
@@ -44,57 +53,172 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  List<Map<String, dynamic>> _filterJobs(List<Map<String, dynamic>> jobs) {
+    if (_searchQuery.isEmpty) return jobs;
+    final q = _searchQuery.toLowerCase();
+    return jobs.where((job) {
+      final String jobId = (job['job_card_id'] ?? '#${job['id']}').toString().toLowerCase();
+      final String customerName = _getCustomerName(job).toLowerCase();
+      final String vehicleNo = _getVehicleNo(job).toLowerCase();
+      
+      final String clientPhone = (job['bookings']?['customer_phone'] ?? job['client_phone'] ?? '').toString().toLowerCase();
+
+      return jobId.contains(q) || customerName.contains(q) || vehicleNo.contains(q) || clientPhone.contains(q);
+    }).toList();
+  }
+
+  DateTime? _getStartDate() {
+    if (_selectedSingleDate != null) {
+      final d = _selectedSingleDate!;
+      return DateTime(d.year, d.month, d.day, 0, 0, 0);
+    }
+    if (_selectedCustomRange != null) {
+      final d = _selectedCustomRange!.start;
+      return DateTime(d.year, d.month, d.day, 0, 0, 0);
+    }
+
+    final now = DateTime.now();
+    switch (_selectedFilter) {
+      case 'Today':
+        return DateTime(now.year, now.month, now.day, 0, 0, 0);
+      case 'This Week':
+        final monday = now.subtract(Duration(days: now.weekday - 1));
+        return DateTime(monday.year, monday.month, monday.day, 0, 0, 0);
+      case 'This Month':
+        return DateTime(now.year, now.month, 1, 0, 0, 0);
+      case 'All Time':
+      default:
+        return null;
+    }
+  }
+
+  DateTime? _getEndDate() {
+    if (_selectedSingleDate != null) {
+      final d = _selectedSingleDate!;
+      return DateTime(d.year, d.month, d.day, 23, 59, 59);
+    }
+    if (_selectedCustomRange != null) {
+      final d = _selectedCustomRange!.end;
+      return DateTime(d.year, d.month, d.day, 23, 59, 59);
+    }
+    return null;
+  }
+
+  Future<void> _pickSingleDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedSingleDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedSingleDate = picked;
+        _selectedCustomRange = null;
+        _selectedFilter = DateFormat('dd MMM yyyy').format(picked);
+      });
+      _loadData();
+    }
+  }
+
+  Future<void> _pickCustomRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      initialDateRange: _selectedCustomRange ??
+          DateTimeRange(
+            start: DateTime.now().subtract(const Duration(days: 7)),
+            end: DateTime.now(),
+          ),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedCustomRange = picked;
+        _selectedSingleDate = null;
+        _selectedFilter = 'Custom Range';
+      });
+      _loadData();
+    }
   }
 
   Future<void> _loadData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
+      final startDate = _getStartDate();
+      final startDateIso = startDate?.toIso8601String();
+      final endDate = _getEndDate();
+      final endDateIso = endDate?.toIso8601String();
+      final companyName = CompanyService().companyName;
+
       // Fetch completed, not yet billed (NULL or Draft)
-      final pendingRes = await supabase
+      var pendingQuery = supabase
           .from('reports')
           .select('''
             id, job_card_id, status, billing_status,
-            complaint, suggested, labour_cost, created_at, completed_at,
+            complaint, suggested, labour_cost, created_at, completed_at, marks,
             gst_percent, discount_amount, discount_type, extra_charge_amount, extra_charge_label,
             "Owner name", client_phone,
             vehicles!reports_vehicle_fk("Vehicle Number", vehicle_models(brand, "Model name")),
-            bookings(customer_name, customer_phone)
+            bookings(customer_name, customer_phone),
+            executive:executive_id(username)
           ''')
           .eq('status', AppConstants.statusCompleted)
-          .or('billing_status.is.null,billing_status.eq.${AppConstants.statusDraft}')
-          .order('completed_at', ascending: false);
+          .or('billing_status.is.null,billing_status.eq.${AppConstants.statusDraft}');
+      if (companyName != null && companyName.isNotEmpty) pendingQuery = pendingQuery.eq('company_name', companyName);
+      if (startDateIso != null && endDateIso != null) {
+        pendingQuery = pendingQuery.or('and(completed_at.gte.$startDateIso,completed_at.lte.$endDateIso),and(completed_at.is.null,created_at.gte.$startDateIso,created_at.lte.$endDateIso)');
+      } else if (startDateIso != null) {
+        pendingQuery = pendingQuery.or('completed_at.gte.$startDateIso,and(completed_at.is.null,created_at.gte.$startDateIso)');
+      }
+      final pendingRes = await pendingQuery.order('id', ascending: false);
 
       // Fetch billed (unpaid) invoices
-      final billedRes = await supabase
+      var billedQuery = supabase
           .from('reports')
           .select('''
             id, job_card_id, status, billing_status,
-            complaint, suggested, labour_cost, created_at, completed_at,
+            complaint, suggested, labour_cost, created_at, completed_at, marks,
             billed_at, paid_at, payment_method,
             gst_percent, discount_amount, discount_type, extra_charge_amount, extra_charge_label,
             "Owner name", client_phone,
             vehicles!reports_vehicle_fk("Vehicle Number", vehicle_models(brand, "Model name")),
-            bookings(customer_name, customer_phone)
+            bookings(customer_name, customer_phone),
+            executive:executive_id(username),
+            payments(method, amount, transaction_id)
           ''')
-          .eq('billing_status', AppConstants.statusBilled)
-          .order('billed_at', ascending: false);
+          .eq('billing_status', AppConstants.statusBilled);
+      if (companyName != null && companyName.isNotEmpty) billedQuery = billedQuery.eq('company_name', companyName);
+      if (startDateIso != null) billedQuery = billedQuery.gte('billed_at', startDateIso);
+      if (endDateIso != null) billedQuery = billedQuery.lte('billed_at', endDateIso);
+      final billedRes = await billedQuery.order('id', ascending: false);
 
       // Fetch paid invoices
-      final paidRes = await supabase
+      var paidQuery = supabase
           .from('reports')
           .select('''
             id, job_card_id, status, billing_status,
-            complaint, suggested, labour_cost, created_at, completed_at,
+            complaint, suggested, labour_cost, created_at, completed_at, marks,
             billed_at, paid_at, payment_method,
             gst_percent, discount_amount, discount_type, extra_charge_amount, extra_charge_label,
             "Owner name", client_phone,
             vehicles!reports_vehicle_fk("Vehicle Number", vehicle_models(brand, "Model name")),
-            bookings(customer_name, customer_phone)
+            bookings(customer_name, customer_phone),
+            executive:executive_id(username),
+            payments(method, amount, transaction_id)
           ''')
-          .eq('billing_status', AppConstants.statusPaid)
-          .order('paid_at', ascending: false);
+          .eq('billing_status', AppConstants.statusPaid);
+      if (companyName != null && companyName.isNotEmpty) paidQuery = paidQuery.eq('company_name', companyName);
+      if (startDateIso != null) paidQuery = paidQuery.gte('paid_at', startDateIso);
+      if (endDateIso != null) paidQuery = paidQuery.lte('paid_at', endDateIso);
+      final paidRes = await paidQuery.order('id', ascending: false);
 
       if (!mounted) return;
 
@@ -138,7 +262,24 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       final labour = (job['labour_cost'] ?? 0).toDouble();
       total += labour;
 
-      // Decode complaint list (may be a JSON string or already a List)
+      final marksObj = job['marks'];
+      bool isCourier = false;
+      Map<String, dynamic>? marksMap;
+      if (marksObj != null) {
+        if (marksObj is String) {
+          try {
+            final decoded = jsonDecode(marksObj);
+            if (decoded is Map<String, dynamic>) marksMap = decoded;
+          } catch (_) {}
+        } else if (marksObj is Map) {
+          marksMap = Map<String, dynamic>.from(marksObj);
+        }
+        if (marksMap != null && marksMap['is_courier'] == true) {
+          isCourier = true;
+        }
+      }
+
+      // Decode complaint list
       dynamic rawComplaints = job['complaint'];
       List<dynamic> complaints = [];
       if (rawComplaints is List) {
@@ -146,11 +287,8 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       } else if (rawComplaints is String && rawComplaints.trim().startsWith('[')) {
         try { complaints = jsonDecode(rawComplaints); } catch (_) {}
       }
-      for (final c in complaints) {
-        if (c is Map) total += ((c['amount'] ?? 0) as num).toDouble();
-      }
 
-      // Decode suggested list (may be a JSON string or already a List)
+      // Decode suggested list
       dynamic rawSuggested = job['suggested'];
       List<dynamic> suggested = [];
       if (rawSuggested is List) {
@@ -158,9 +296,35 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       } else if (rawSuggested is String && rawSuggested.trim().startsWith('[')) {
         try { suggested = jsonDecode(rawSuggested); } catch (_) {}
       }
-      for (final s in suggested) {
-        if (s is Map && s['type'] != AppConstants.typeComplaint) {
-          total += ((s['amount'] ?? 0) as num).toDouble();
+
+      if (isCourier) {
+        double complaintTotal = 0;
+        for (final c in complaints) {
+          if (c is Map) complaintTotal += ((c['amount'] ?? 0) as num).toDouble();
+        }
+
+        if (complaintTotal > 0) {
+          total += complaintTotal;
+        } else {
+          final products = marksMap?['products'] as List<dynamic>?;
+          if (products != null) {
+            for (final p in products) {
+              if (p is Map) {
+                final qty = (p['qty'] ?? 1) as num;
+                final unitPrice = ((p['price'] ?? p['amount'] ?? 0) as num).toDouble();
+                total += unitPrice * qty;
+              }
+            }
+          }
+        }
+      } else {
+        for (final c in complaints) {
+          if (c is Map) total += ((c['amount'] ?? 0) as num).toDouble();
+        }
+        for (final s in suggested) {
+          if (s is Map && s['type'] != AppConstants.typeComplaint) {
+            total += ((s['amount'] ?? 0) as num).toDouble();
+          }
         }
       }
 
@@ -204,6 +368,16 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
     final brand = job['vehicles']?['vehicle_models']?['brand'] ?? '';
     final model = job['vehicles']?['vehicle_models']?['Model name'] ?? '';
     return '$brand $model'.trim();
+  }
+
+  String _formatDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return 'N/A';
+    try {
+      final parsed = AppDateUtils.parseUtcToLocal(dateStr);
+      return DateFormat('dd MMM yyyy, hh:mm a').format(parsed);
+    } catch (_) {
+      return 'Invalid Date';
+    }
   }
 
   Future<void> _logout() async {
@@ -261,46 +435,194 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
             ],
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppTheme.primaryColor,
-          unselectedLabelColor: AppTheme.textSecondary,
-          indicatorColor: AppTheme.primaryColor,
-          labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-          labelStyle: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-          unselectedLabelStyle: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-          tabs: [
-            Tab(text: 'Pending ($_pendingCount)'),
-            Tab(text: 'Billed (${_billed.length})'),
-            Tab(text: 'Completed (${_paid.length})'),
-          ],
-        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                // Metrics strip
-                _buildMetricsStrip(),
-                // Tab views
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
+          : NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) {
+                return [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        _buildFilterStrip(),
+                        _buildMetricsStrip(),
+                      ],
+                    ),
+                  ),
+                  SliverAppBar(
+                    pinned: true,
+                    floating: false,
+                    automaticallyImplyLeading: false,
+                    backgroundColor: const Color(0xFFF8FAFC),
+                    surfaceTintColor: Colors.transparent,
+                    elevation: 2,
+                    shadowColor: Colors.black12,
+                    toolbarHeight: 68,
+                    titleSpacing: 0,
+                    title: _buildSearchBar(),
+                    bottom: TabBar(
+                      controller: _tabController,
+                      labelColor: AppTheme.primaryColor,
+                      unselectedLabelColor: AppTheme.textSecondary,
+                      indicatorColor: AppTheme.primaryColor,
+                      labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      labelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      unselectedLabelStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      tabs: [
+                        Tab(text: 'Pending ($_pendingCount)'),
+                        Tab(text: 'Billed (${_billed.length})'),
+                        Tab(text: 'Completed (${_paid.length})'),
+                      ],
+                    ),
+                  ),
+                ];
+              },
+              body: TabBarView(
+                controller: _tabController,
+                children: [
+                  _buildPendingList(),
+                  _buildBilledList(),
+                  _buildCompletedList(),
+                ],
+              ),
+            ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: TextField(
+        controller: _searchController,
+        onChanged: (value) => setState(() => _searchQuery = value),
+        decoration: InputDecoration(
+          hintText: 'Search by Name, Vehicle, Phone, or ID...',
+          prefixIcon: const Icon(Icons.search, color: AppTheme.primaryColor),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.grey),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppTheme.primaryColor, width: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterStrip() {
+    final hasSingleDate = _selectedSingleDate != null;
+    final hasCustomRange = _selectedCustomRange != null;
+    final activeDateLabel = hasSingleDate
+        ? DateFormat('dd MMM yyyy').format(_selectedSingleDate!)
+        : hasCustomRange
+            ? '${DateFormat('dd MMM').format(_selectedCustomRange!.start)} - ${DateFormat('dd MMM').format(_selectedCustomRange!.end)}'
+            : null;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.white,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Date Filter:', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
+              const SizedBox(width: 6),
+              IconButton(
+                icon: Icon(
+                  Icons.calendar_month_rounded,
+                  color: (hasSingleDate || hasCustomRange) ? AppTheme.primaryColor : Colors.grey.shade700,
+                  size: 22,
+                ),
+                tooltip: 'Filter by Single Date',
+                onPressed: _pickSingleDate,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+              if (activeDateLabel != null) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildPendingList(),
-                      _buildBilledList(),
-                      _buildCompletedList(),
+                      Text(
+                        activeDateLabel,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.primaryColor,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: () {
+                          setState(() {
+                            _selectedSingleDate = null;
+                            _selectedCustomRange = null;
+                            _selectedFilter = 'Today';
+                          });
+                          _loadData();
+                        },
+                        child: const Icon(Icons.close, size: 14, color: AppTheme.primaryColor),
+                      ),
                     ],
                   ),
                 ),
               ],
-            ),
+            ],
+          ),
+          DropdownButton<String>(
+            value: _filterOptions.contains(_selectedFilter) ? _selectedFilter : null,
+            hint: _filterOptions.contains(_selectedFilter) ? null : Text(_selectedFilter, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+            underline: const SizedBox(),
+            icon: const Icon(Icons.keyboard_arrow_down, color: AppTheme.primaryColor),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+            items: _filterOptions.map((f) => DropdownMenuItem(value: f, child: Text(f))).toList(),
+            onChanged: (v) async {
+              if (v == 'Custom Range') {
+                await _pickCustomRange();
+              } else if (v != null) {
+                setState(() {
+                  _selectedSingleDate = null;
+                  _selectedCustomRange = null;
+                  _selectedFilter = v;
+                });
+                _loadData();
+              }
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -359,7 +681,8 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
   }
 
   Widget _buildPendingList() {
-    if (_pendingBills.isEmpty) {
+    final filtered = _filterJobs(_pendingBills);
+    if (filtered.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -377,14 +700,15 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       onRefresh: _loadData,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
-        itemCount: _pendingBills.length,
-        itemBuilder: (context, i) => _buildJobCard(_pendingBills[i], isPending: true),
+        itemCount: filtered.length,
+        itemBuilder: (context, i) => _buildJobCard(filtered[i], isPending: true),
       ),
     );
   }
 
   Widget _buildBilledList() {
-    if (_billed.isEmpty) {
+    final filtered = _filterJobs(_billed);
+    if (filtered.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -400,14 +724,15 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       onRefresh: _loadData,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
-        itemCount: _billed.length,
-        itemBuilder: (context, i) => _buildJobCard(_billed[i], isPending: false),
+        itemCount: filtered.length,
+        itemBuilder: (context, i) => _buildJobCard(filtered[i], isPending: false),
       ),
     );
   }
 
   Widget _buildCompletedList() {
-    if (_paid.isEmpty) {
+    final filtered = _filterJobs(_paid);
+    if (filtered.isEmpty) {
       return const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -423,8 +748,8 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
       onRefresh: _loadData,
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 16.0),
-        itemCount: _paid.length,
-        itemBuilder: (context, i) => _buildJobCard(_paid[i], isPending: false),
+        itemCount: filtered.length,
+        itemBuilder: (context, i) => _buildJobCard(filtered[i], isPending: false),
       ),
     );
   }
@@ -449,6 +774,36 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
         : isBilled
             ? Colors.blue
             : Colors.orange;
+
+    final marksObj = job['marks'];
+    bool isCourier = false;
+    String? courierSubtitle;
+    String? courierDetails;
+    
+    if (marksObj != null) {
+      Map<String, dynamic>? marksMap;
+      if (marksObj is String) {
+        try {
+          final decoded = jsonDecode(marksObj);
+          if (decoded is Map<String, dynamic>) marksMap = decoded;
+        } catch (_) {}
+      } else if (marksObj is Map) {
+        marksMap = Map<String, dynamic>.from(marksObj);
+      }
+      
+      if (marksMap != null && marksMap['is_courier'] == true) {
+        isCourier = true;
+        
+        final products = marksMap['products'] as List<dynamic>?;
+        if (products != null && products.isNotEmpty) {
+           courierSubtitle = products[0]['name']?.toString() ?? 'Courier Package';
+           courierDetails = '${products.length} Product(s)';
+        } else {
+           courierSubtitle = 'Courier Package';
+           courierDetails = 'No Products';
+        }
+      }
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 14),
@@ -482,27 +837,79 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          job['job_card_id'] ?? '#${job['id']}',
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                job['job_card_id'] ?? '#${job['id']}',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isCourier) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.blue.shade200),
+                                ),
+                                child: const Text(
+                                  'Courier',
+                                  style: TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 3),
-                        Text(
-                          _getBrandModel(job),
-                          style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(6),
+                        if (isCourier) ...[
+                          Row(
+                            children: [
+                              const Icon(Icons.inventory_2, size: 14, color: AppTheme.textSecondary),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  courierSubtitle ?? 'Courier Package',
+                                  style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary, fontWeight: FontWeight.w600),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
-                          child: Text(
-                            _getVehicleNo(job),
-                            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.purple.shade200),
+                            ),
+                            child: Text(
+                              courierDetails ?? 'Details',
+                              style: TextStyle(fontSize: 12, color: Colors.purple.shade700, fontWeight: FontWeight.bold),
+                            ),
                           ),
-                        ),
+                        ] else ...[
+                          Text(
+                            _getBrandModel(job),
+                            style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _getVehicleNo(job),
+                              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -532,6 +939,49 @@ class _AccountantDashboardScreenState extends State<AccountantDashboardScreen>
                   const Icon(Icons.arrow_forward_ios, size: 13, color: AppTheme.textSecondary),
                 ],
               ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.calendar_today, size: 14, color: AppTheme.textSecondary),
+                  const SizedBox(width: 5),
+                  Text(
+                    isPaid ? _formatDate(job['paid_at']) 
+                    : isBilled ? _formatDate(job['billed_at']) 
+                    : (isCourier ? _formatDate(job['created_at']) : _formatDate(job['completed_at'])), 
+                    style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.engineering, size: 14, color: AppTheme.textSecondary),
+                  const SizedBox(width: 5),
+                  Text(job['executive']?['username'] ?? 'Unknown', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary, fontWeight: FontWeight.w600)),
+                ],
+              ),
+              if (isBilled && !isPaid) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PaymentScreen(job: job, grandTotal: total),
+                        ),
+                      );
+                      _loadData();
+                    },
+                    icon: const Icon(Icons.payment, size: 18),
+                    label: const Text('Record Payment', style: TextStyle(fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

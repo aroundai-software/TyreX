@@ -128,9 +128,14 @@ class _MultiWheelCameraScreenState extends State<MultiWheelCameraScreen> {
     final currentTarget = widget.targets[_currentTargetIndex];
     final progressText = '${_currentTargetIndex + 1} of ${widget.targets.length}';
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.pop(context, _capturedPhotos);
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
         children: [
           // Camera Preview
           Positioned.fill(
@@ -216,6 +221,7 @@ class _MultiWheelCameraScreenState extends State<MultiWheelCameraScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }

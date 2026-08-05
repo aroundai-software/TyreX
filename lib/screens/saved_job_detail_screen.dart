@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_constants.dart';
+import '../utils/date_utils.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
@@ -100,6 +101,16 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
           }
           return Map<String, dynamic>.from(e);
         }).toList();
+      }
+
+      // Sync updated amounts from complaintList if available
+      for (var c in complaints) {
+        final textName = c['text'] ?? c['name'];
+        final matched = complaintList.where((e) => e is Map && (e['text'] ?? e['name']) == textName).firstOrNull;
+        if (matched != null && matched is Map) {
+          final amt = (matched['amount'] as num?)?.toDouble();
+          if (amt != null && amt > 0) c['amount'] = amt;
+        }
       }
 
       setState(() {
@@ -208,7 +219,7 @@ class _SavedJobDetailScreenState extends State<SavedJobDetailScreen> {
     String dateStr = '';
     if (createdAt != null) {
       try {
-        final dt = DateTime.parse(createdAt).toLocal();
+        final dt = AppDateUtils.parseUtcToLocal(createdAt);
         dateStr = '${dt.day}/${dt.month}/${dt.year}';
       } catch (_) {}
     }

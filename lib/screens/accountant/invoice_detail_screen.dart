@@ -10,7 +10,9 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/app_constants.dart';
+import '../../utils/date_utils.dart';
 import '../../providers/user_provider.dart';
+import '../../providers/admin_settings_provider.dart';
 import 'payment_screen.dart';
 
 class InvoiceDetailScreen extends StatefulWidget {
@@ -26,8 +28,22 @@ class InvoiceDetailScreen extends StatefulWidget {
 class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
   final supabase = Supabase.instance.client;
   bool _isSubmitting = false;
+  bool _isEditableOverride = false;
+  bool _isCourier = false;
+
+  bool get _isEffectivelyPending => widget.isPending || _isEditableOverride;
 
   List<Map<String, dynamic>> _complaints = [];
+  
+  String _formatDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return 'N/A';
+    try {
+      final parsed = AppDateUtils.parseUtcToLocal(dateStr);
+      return DateFormat('dd MMM yyyy, hh:mm a').format(parsed);
+    } catch (_) {
+      return 'Invalid Date';
+    }
+  }
   List<Map<String, dynamic>> _suggestions = [];
   double _labourCost = 0;
   double _subtotal = 0;
@@ -44,6 +60,9 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
   final _extraLabelController = TextEditingController();
   double _extraChargeAmount = 0;
   final _extraAmountController = TextEditingController(text: '0');
+
+  final Map<String, TextEditingController> _unitPriceControllers = {};
+  final Map<String, TextEditingController> _totalControllers = {};
 
   // ── Computed totals ──
   double get _discountAmount {
@@ -75,6 +94,12 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     _discountController.dispose();
     _extraLabelController.dispose();
     _extraAmountController.dispose();
+    for (final c in _unitPriceControllers.values) {
+      c.dispose();
+    }
+    for (final c in _totalControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -106,6 +131,57 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
             .where((e) => e['type'] != AppConstants.typeComplaint)
             .toList();
       } catch (_) {}
+    }
+
+    final marksObj = job['marks'];
+    if (marksObj != null) {
+      Map<String, dynamic>? marksMap;
+      if (marksObj is String) {
+        try {
+          final decoded = jsonDecode(marksObj);
+          if (decoded is Map<String, dynamic>) marksMap = decoded;
+        } catch (_) {}
+      } else if (marksObj is Map) {
+        marksMap = Map<String, dynamic>.from(marksObj);
+      }
+      
+    if (marksMap != null && marksMap['is_courier'] == true) {
+      _isCourier = true;
+      
+      bool hasSavedDraft = false;
+      if (_complaints.isNotEmpty) {
+        for (final c in _complaints) {
+          if (((c['amount'] ?? 0) as num) > 0 || ((c['unit_price'] ?? 0) as num) > 0) {
+            hasSavedDraft = true;
+            break;
+          }
+        }
+      }
+
+      if (!hasSavedDraft) {
+        final products = marksMap['products'] as List<dynamic>?;
+        if (products != null && products.isNotEmpty) {
+          _complaints = products.map((p) {
+            final name = (p['name'] as String?)?.isNotEmpty == true
+                ? p['name']
+                : '${p['brand'] ?? ''} ${p['model'] ?? ''} ${p['size'] ?? ''}'.trim();
+            final qty = (p['qty'] ?? 1) as num;
+            final unitPrice = ((p['price'] ?? p['amount'] ?? 0) as num).toDouble();
+            final totalPrice = unitPrice * qty;
+            final labelText = name.isNotEmpty ? name : 'Courier Package';
+            return {
+              'name': labelText,
+              'text': labelText,
+              'qty': qty.toInt(),
+              'unit_price': unitPrice,
+              'amount': totalPrice,
+            };
+          }).toList();
+        } else {
+          _complaints = [{'name': 'Courier Package', 'text': 'Courier Package', 'qty': 1, 'unit_price': 0.0, 'amount': 0.0}];
+        }
+      }
+    }
     }
 
     _recalcTotals();
@@ -157,7 +233,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     return '$brand $model'.trim();
   }
 
-  Future<void> _markAsBilled() async {
+  Future<void> _markAsBilled({bool proceedToPayment = false}) async {
     setState(() => _isSubmitting = true);
     try {
       final user = Provider.of<UserProvider>(context, listen: false).user;
@@ -173,20 +249,24 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
         try { finalSuggested = List<Map<String, dynamic>>.from(jsonDecode(rawSuggested)); } catch (_) {}
       }
       
-      // Update amounts in finalSuggested based on _suggestions
+      // Update amounts in finalSuggested based on _complaints and _suggestions
       for (var s in finalSuggested) {
-        if (s['type'] != AppConstants.typeComplaint) {
-          final matched = _suggestions.where((e) => e['text'] == s['text']).firstOrNull;
-          if (matched != null) {
-            s['amount'] = matched['amount'];
-          }
+        final textName = s['text'] ?? s['name'];
+        final matchedC = _complaints.where((e) => (e['text'] ?? e['name']) == textName).firstOrNull;
+        if (matchedC != null) {
+          s['amount'] = matchedC['amount'];
+          if (matchedC['unit_price'] != null) s['unit_price'] = matchedC['unit_price'];
+          if (matchedC['qty'] != null) s['qty'] = matchedC['qty'];
+        }
+        final matchedS = _suggestions.where((e) => (e['text'] ?? e['name']) == textName).firstOrNull;
+        if (matchedS != null) {
+          s['amount'] = matchedS['amount'];
+          if (matchedS['unit_price'] != null) s['unit_price'] = matchedS['unit_price'];
+          if (matchedS['qty'] != null) s['qty'] = matchedS['qty'];
         }
       }
 
-      await supabase.from('reports').update({
-        'billing_status': AppConstants.statusBilled,
-        'billed_at': DateTime.now().toIso8601String(),
-        'billed_by': user?['id'],
+      final updateData = {
         'labour_cost': _labourCost,
         'complaint': _complaints,
         'suggested': finalSuggested,
@@ -195,13 +275,96 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
         'discount_type': _discountValue > 0 ? _discountType : null,
         'extra_charge_amount': _extraChargeAmount > 0 ? _extraChargeAmount : null,
         'extra_charge_label': _extraChargeAmount > 0 ? _extraLabelController.text.trim() : null,
-      }).eq('id', widget.job['id']);
+      };
+
+      if (_isCourier) {
+        final marksObj = widget.job['marks'];
+        Map<String, dynamic> marksMap = {};
+        if (marksObj != null) {
+          if (marksObj is String) {
+            try { marksMap = Map<String, dynamic>.from(jsonDecode(marksObj)); } catch (_) {}
+          } else if (marksObj is Map) {
+            marksMap = Map<String, dynamic>.from(marksObj);
+          }
+        }
+        
+        final existingProducts = marksMap['products'] as List<dynamic>? ?? [];
+        List<Map<String, dynamic>> updatedProducts = [];
+        for (int i = 0; i < _complaints.length; i++) {
+          final c = _complaints[i];
+          Map<String, dynamic> prod = (i < existingProducts.length && existingProducts[i] is Map)
+              ? Map<String, dynamic>.from(existingProducts[i])
+              : {};
+          prod['name'] = c['name'] ?? c['text'];
+          prod['price'] = c['unit_price'] ?? c['amount'];
+          prod['qty'] = c['qty'] ?? 1;
+          updatedProducts.add(prod);
+        }
+        
+        marksMap['is_courier'] = true;
+        marksMap['products'] = updatedProducts;
+        updateData['marks'] = jsonEncode(marksMap);
+        widget.job['marks'] = updateData['marks'];
+      }
+      widget.job['complaint'] = updateData['complaint'];
+
+      if (!_isEditableOverride) {
+        updateData['billing_status'] = AppConstants.statusBilled;
+        updateData['billed_at'] = DateTime.now().toUtc().toIso8601String();
+        updateData['billed_by'] = user?['id'];
+      }
+
+      if (_isCourier) {
+        final marksObj = widget.job['marks'];
+        Map<String, dynamic> marksMap = {};
+        if (marksObj != null) {
+          if (marksObj is String) {
+            try { marksMap = Map<String, dynamic>.from(jsonDecode(marksObj)); } catch (_) {}
+          } else if (marksObj is Map) {
+            marksMap = Map<String, dynamic>.from(marksObj);
+          }
+        }
+        
+        final existingProducts = marksMap['products'] as List<dynamic>? ?? [];
+        List<Map<String, dynamic>> updatedProducts = [];
+        for (int i = 0; i < _complaints.length; i++) {
+          final c = _complaints[i];
+          Map<String, dynamic> prod = (i < existingProducts.length && existingProducts[i] is Map)
+              ? Map<String, dynamic>.from(existingProducts[i])
+              : {};
+          prod['name'] = c['name'] ?? c['text'];
+          prod['price'] = c['unit_price'] ?? c['amount'];
+          prod['qty'] = c['qty'] ?? 1;
+          updatedProducts.add(prod);
+        }
+        
+        marksMap['is_courier'] = true;
+        marksMap['products'] = updatedProducts;
+        updateData['marks'] = jsonEncode(marksMap);
+        widget.job['marks'] = updateData['marks'];
+      }
+      widget.job['complaint'] = updateData['complaint'];
+
+      await supabase.from('reports').update(updateData).eq('id', widget.job['id']);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invoice marked as Billed!'), backgroundColor: Colors.blue),
+        SnackBar(
+          content: Text(_isEditableOverride ? 'Invoice updated successfully!' : 'Invoice marked as Billed!'),
+          backgroundColor: Colors.blue,
+        ),
       );
-      Navigator.pop(context);
+      
+      if (proceedToPayment) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PaymentScreen(job: widget.job, grandTotal: _grandTotal),
+          ),
+        );
+      } else {
+        Navigator.pop(context);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -225,15 +388,22 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
       }
       
       for (var s in finalSuggested) {
-        if (s['type'] != AppConstants.typeComplaint) {
-          final matched = _suggestions.where((e) => e['text'] == s['text']).firstOrNull;
-          if (matched != null) {
-            s['amount'] = matched['amount'];
-          }
+        final textName = s['text'] ?? s['name'];
+        final matchedC = _complaints.where((e) => (e['text'] ?? e['name']) == textName).firstOrNull;
+        if (matchedC != null) {
+          s['amount'] = matchedC['amount'];
+          if (matchedC['unit_price'] != null) s['unit_price'] = matchedC['unit_price'];
+          if (matchedC['qty'] != null) s['qty'] = matchedC['qty'];
+        }
+        final matchedS = _suggestions.where((e) => (e['text'] ?? e['name']) == textName).firstOrNull;
+        if (matchedS != null) {
+          s['amount'] = matchedS['amount'];
+          if (matchedS['unit_price'] != null) s['unit_price'] = matchedS['unit_price'];
+          if (matchedS['qty'] != null) s['qty'] = matchedS['qty'];
         }
       }
 
-      await supabase.from('reports').update({
+      final updateData = <String, dynamic>{
         'billing_status': AppConstants.statusDraft,
         'labour_cost': _labourCost,
         'complaint': _complaints,
@@ -243,7 +413,40 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
         'discount_type': _discountValue > 0 ? _discountType : null,
         'extra_charge_amount': _extraChargeAmount > 0 ? _extraChargeAmount : null,
         'extra_charge_label': _extraChargeAmount > 0 ? _extraLabelController.text.trim() : null,
-      }).eq('id', widget.job['id']);
+      };
+
+      if (_isCourier) {
+        final marksObj = widget.job['marks'];
+        Map<String, dynamic> marksMap = {};
+        if (marksObj != null) {
+          if (marksObj is String) {
+            try { marksMap = Map<String, dynamic>.from(jsonDecode(marksObj)); } catch (_) {}
+          } else if (marksObj is Map) {
+            marksMap = Map<String, dynamic>.from(marksObj);
+          }
+        }
+        
+        final existingProducts = marksMap['products'] as List<dynamic>? ?? [];
+        List<Map<String, dynamic>> updatedProducts = [];
+        for (int i = 0; i < _complaints.length; i++) {
+          final c = _complaints[i];
+          Map<String, dynamic> prod = (i < existingProducts.length && existingProducts[i] is Map)
+              ? Map<String, dynamic>.from(existingProducts[i])
+              : {};
+          prod['name'] = c['name'] ?? c['text'];
+          prod['price'] = c['unit_price'] ?? c['amount'];
+          prod['qty'] = c['qty'] ?? 1;
+          updatedProducts.add(prod);
+        }
+        
+        marksMap['is_courier'] = true;
+        marksMap['products'] = updatedProducts;
+        updateData['marks'] = jsonEncode(marksMap);
+        widget.job['marks'] = updateData['marks'];
+      }
+      widget.job['complaint'] = updateData['complaint'];
+
+      await supabase.from('reports').update(updateData).eq('id', widget.job['id']);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -368,14 +571,16 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
               pw.Divider(),
               pw.SizedBox(height: 8),
               pw.Row(children: [
-                pw.Expanded(child: pw.Text('Parts & Services Subtotal', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700))),
+                pw.Expanded(child: pw.Text(_isCourier ? 'Packages Subtotal' : 'Parts & Services Subtotal', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700))),
                 pw.Text(currency.format(_subtotal), style: const pw.TextStyle(fontSize: 12)),
               ]),
-              pw.SizedBox(height: 4),
-              pw.Row(children: [
-                pw.Expanded(child: pw.Text('Labour Charges', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700))),
-                pw.Text(currency.format(_labourCost), style: const pw.TextStyle(fontSize: 12)),
-              ]),
+              if (_isCourier || _labourCost > 0) ...[
+                pw.SizedBox(height: 4),
+                pw.Row(children: [
+                  pw.Expanded(child: pw.Text(_isCourier ? 'Delivery Charges' : 'Labour Charges', style: const pw.TextStyle(fontSize: 12, color: PdfColors.grey700))),
+                  pw.Text(currency.format(_labourCost), style: const pw.TextStyle(fontSize: 12)),
+                ]),
+              ],
               if (_discountAmount > 0) ...[
                 pw.SizedBox(height: 4),
                 pw.Row(children: [
@@ -441,15 +646,71 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     final billingStatus = widget.job['billing_status'] as String?;
     final isPaid = billingStatus == AppConstants.statusPaid;
     final isBilled = billingStatus == AppConstants.statusBilled;
+    
+    // Check if within edit window
+    bool canEdit = false;
+    if (!widget.isPending && !_isEditableOverride) {
+      final settings = context.watch<AdminSettingsProvider>();
+      final windowMinutes = settings.invoiceEditWindowMinutes;
+      
+      final String? timeString = widget.job['paid_at'] ?? widget.job['billed_at'];
+      if (timeString != null) {
+        String cleanDate = timeString;
+        if (cleanDate.endsWith('Z')) cleanDate = cleanDate.substring(0, cleanDate.length - 1);
+        if (cleanDate.contains('+')) cleanDate = cleanDate.split('+')[0];
+        final timeParsed = DateTime.parse(cleanDate);
+        final limit = timeParsed.add(Duration(minutes: windowMinutes));
+        if (DateTime.now().isBefore(limit)) {
+          canEdit = true;
+        }
+      }
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text('Invoice — ${widget.job['job_card_id'] ?? '#${widget.job['id']}'}'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                widget.job['job_card_id'] ?? 'Job #${widget.job['id']}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (_isCourier) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: const Text(
+                  'Courier',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.blue),
+                ),
+              ),
+            ],
+          ],
+        ),
         backgroundColor: Colors.white,
         elevation: 0,
         foregroundColor: AppTheme.textPrimary,
         actions: [
+          if (canEdit)
+            IconButton(
+              icon: const Icon(Icons.edit, color: AppTheme.primaryColor),
+              tooltip: 'Edit Invoice',
+              onPressed: () {
+                setState(() => _isEditableOverride = true);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Invoice is now editable.'), backgroundColor: Colors.blue),
+                );
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.share_outlined),
             tooltip: 'Share Invoice',
@@ -469,21 +730,24 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
           children: [
             // Customer & Vehicle
             _buildSection(
-              icon: Icons.person_outline,
-              title: 'Customer & Vehicle',
+              icon: _isCourier ? Icons.local_shipping_outlined : Icons.person_outline,
+              title: _isCourier ? 'Customer & Delivery Info' : 'Customer & Vehicle',
               color: Colors.blue,
               child: Column(
                 children: [
                   _infoRow('Customer', _getCustomerName()),
                   _infoRow('Phone', _getCustomerPhone()),
-                  _infoRow('Vehicle No.', _getVehicleNo()),
-                  _infoRow('Model', _getBrandModel()),
+                  if (!_isCourier) _infoRow('Vehicle No.', _getVehicleNo()),
+                  if (!_isCourier) _infoRow('Model', _getBrandModel()),
+                  if (widget.job['created_at'] != null)
+                    _infoRow(
+                      'Created',
+                      _formatDate(widget.job['created_at']),
+                    ),
                   if (widget.job['completed_at'] != null)
                     _infoRow(
                       'Completed',
-                      DateFormat('dd MMM yyyy, hh:mm a').format(
-                        DateTime.parse(widget.job['completed_at']).toLocal(),
-                      ),
+                      _formatDate(widget.job['completed_at']),
                     ),
                 ],
               ),
@@ -493,15 +757,26 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
 
             if (_complaints.isNotEmpty)
               _buildSection(
-                icon: Icons.build_outlined,
-                title: 'Services / Complaints',
+                icon: _isCourier ? Icons.inventory_2_outlined : Icons.build_outlined,
+                title: _isCourier ? 'Packages / Items' : 'Services / Complaints',
                 color: AppTheme.primaryColor,
                 child: Column(
                   children: _complaints.map((c) => _lineItem(
-                    c['text'] ?? '-',
-                    ((c['amount'] ?? 0) as num).toDouble(),
-                    (newAmount) => setState(() {
-                      c['amount'] = newAmount;
+                    c,
+                    onUnitPriceChanged: (newUnitPrice) => setState(() {
+                      c['unit_price'] = newUnitPrice;
+                      final qty = ((c['qty'] ?? 1) as num);
+                      c['amount'] = newUnitPrice * qty;
+                      _recalcTotals();
+                    }),
+                    onTotalChanged: (newTotal) => setState(() {
+                      c['amount'] = newTotal;
+                      final qty = ((c['qty'] ?? 1) as num);
+                      if (qty > 0) {
+                        c['unit_price'] = newTotal / qty;
+                      } else {
+                        c['unit_price'] = newTotal;
+                      }
                       _recalcTotals();
                     }),
                   )).toList(),
@@ -517,9 +792,8 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                 color: Colors.teal,
                 child: Column(
                   children: _suggestions.map((s) => _lineItem(
-                    s['text'] ?? '-',
-                    ((s['amount'] ?? 0) as num).toDouble(),
-                    (newAmount) => setState(() {
+                    s,
+                    onTotalChanged: (newAmount) => setState(() {
                       s['amount'] = newAmount;
                       _recalcTotals();
                     }),
@@ -530,14 +804,14 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
             if (_suggestions.isNotEmpty) const SizedBox(height: 16),
 
             // ── Adjustments card (only editable when pending) ──
-            if (widget.isPending) _buildAdjustmentsCard(),
-            if (widget.isPending) const SizedBox(height: 16),
+            if (_isEffectivelyPending) _buildAdjustmentsCard(),
+            if (_isEffectivelyPending) const SizedBox(height: 16),
 
             // Totals Card
             _buildTotalsCard(currency),
 
             // Billing Status for already-billed/paid jobs
-            if (!widget.isPending) ...[
+            if (!_isEffectivelyPending) ...[
               const SizedBox(height: 16),
               _buildSection(
                 icon: Icons.receipt_long,
@@ -547,10 +821,18 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                   children: [
                     _infoRow('Status', billingStatus ?? '-'),
                     if (widget.job['billed_at'] != null)
-                      _infoRow('Billed On', DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(widget.job['billed_at']).toLocal())),
+                      _infoRow('Billed On', DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(widget.job['billed_at']))),
                     if (widget.job['paid_at'] != null)
-                      _infoRow('Paid On', DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(widget.job['paid_at']).toLocal())),
-                    if (widget.job['payment_method'] != null)
+                      _infoRow('Paid On', DateFormat('dd MMM yyyy, hh:mm a').format(AppDateUtils.parseUtcToLocal(widget.job['paid_at']))),
+                    if (widget.job['payments'] != null && (widget.job['payments'] as List).isNotEmpty)
+                      ...List.generate((widget.job['payments'] as List).length, (i) {
+                        final p = widget.job['payments'][i];
+                        final amt = p['amount'] != null ? currency.format(p['amount']) : '';
+                        final method = p['method'] ?? '';
+                        final tId = p['transaction_id'] != null ? ' (TX: ${p['transaction_id']})' : '';
+                        return _infoRow('Payment ${i + 1}', '$method - $amt$tId');
+                      })
+                    else if (widget.job['payment_method'] != null)
                       _infoRow('Payment Method', widget.job['payment_method']),
                   ],
                 ),
@@ -561,7 +843,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: widget.isPending
+      bottomNavigationBar: _isEffectivelyPending
           ? _buildActionButtons(currency)
           : (isBilled && !isPaid)
               ? _buildRecordPaymentButton()
@@ -720,58 +1002,6 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                     ),
                   ],
                 ),
-
-                const SizedBox(height: 16),
-                const Divider(height: 1),
-                const SizedBox(height: 16),
-
-                // ── Extra Charges ──
-                Row(
-                  children: [
-                    const Icon(Icons.add_circle_outline, size: 16, color: Colors.orange),
-                    const SizedBox(width: 8),
-                    const Text('Extra Charges', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextField(
-                        controller: _extraLabelController,
-                        decoration: InputDecoration(
-                          hintText: 'Label (e.g. Towing)',
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                        ),
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: _extraAmountController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
-                        decoration: InputDecoration(
-                          hintText: 'Amount',
-                          prefixText: '₹ ',
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                        ),
-                        onChanged: (v) => setState(() {
-                          _extraChargeAmount = double.tryParse(v) ?? 0;
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
               ],
             ),
           ),
@@ -790,48 +1020,49 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          _totalRow('Parts & Services Subtotal', _subtotal, isBold: false),
+          _totalRow(_isCourier ? 'Packages Subtotal' : 'Parts & Services Subtotal', _subtotal, isBold: false),
           
-          // Editable Labour Charges
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4, top: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text('Labour Charges', style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
-                ),
-                if (widget.isPending)
-                  SizedBox(
-                    width: 80,
-                    child: TextFormField(
-                      initialValue: _labourCost.toStringAsFixed(0),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        prefixText: '₹ ',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
-                      ),
-                      onChanged: (val) {
-                        setState(() {
-                          _labourCost = double.tryParse(val) ?? 0;
-                        });
-                      },
-                    ),
-                  )
-                else
-                  Text(
-                    currency.format(_labourCost),
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+          // Editable Labour / Delivery Charges (Only if courier or non-zero)
+          if (_isCourier || _labourCost > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4, top: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_isCourier ? 'Delivery Charges' : 'Labour Charges', style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
                   ),
-              ],
+                  if (_isEffectivelyPending)
+                    SizedBox(
+                      width: 80,
+                      child: TextFormField(
+                        initialValue: _labourCost.toStringAsFixed(0),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          prefixText: '₹ ',
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
+                        ),
+                        onChanged: (val) {
+                          setState(() {
+                            _labourCost = double.tryParse(val) ?? 0;
+                          });
+                        },
+                      ),
+                    )
+                  else
+                    Text(
+                      currency.format(_labourCost),
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                    ),
+                ],
+              ),
             ),
-          ),
           if (_discountAmount > 0) ...[
             const SizedBox(height: 4),
             _totalRow(
@@ -867,37 +1098,62 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       color: Colors.white,
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: _isSubmitting ? null : _saveAsDraft,
-              icon: const Icon(Icons.edit_note, size: 20),
-              label: const Text(
-                'Save as Draft',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isSubmitting ? null : _saveAsDraft,
+                  icon: const Icon(Icons.edit_note, size: 20),
+                  label: const Text(
+                    'Save as Draft',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.purple,
+                    side: const BorderSide(color: Colors.purple),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
               ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.purple,
-                side: const BorderSide(color: Colors.purple),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isSubmitting ? null : () => _markAsBilled(proceedToPayment: false),
+                  icon: _isSubmitting
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.blue))
+                      : const Icon(Icons.receipt_long, size: 20),
+                  label: Text(
+                    _isSubmitting ? 'Processing...' : (_isEditableOverride ? 'Update' : 'Bill Only'),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.blue,
+                    side: const BorderSide(color: Colors.blue),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _isSubmitting ? null : _markAsBilled,
+              onPressed: _isSubmitting ? null : () => _markAsBilled(proceedToPayment: true),
               icon: _isSubmitting
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.send, size: 20),
+                  : const Icon(Icons.payment, size: 20),
               label: Text(
-                _isSubmitting ? 'Processing...' : 'Mark as Billed',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                _isSubmitting ? 'Processing...' : (_isEditableOverride ? 'Update & Record Payment' : 'Bill & Record Payment'),
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
+                backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -989,37 +1245,150 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     );
   }
 
-  Widget _lineItem(String name, double amount, void Function(double) onChanged) {
+  Widget _lineItem(
+    Map<String, dynamic> item, {
+    void Function(double)? onUnitPriceChanged,
+    void Function(double)? onTotalChanged,
+  }) {
+    final String name = item['name'] ?? item['text'] ?? '-';
+    final int qty = (item['qty'] ?? item['count'] ?? 1) as int;
+    final double unitPrice = ((item['unit_price'] ?? item['amount'] ?? 0) as num).toDouble();
+    final double amount = ((item['amount'] ?? 0) as num).toDouble();
+
+    final unitController = _unitPriceControllers.putIfAbsent(
+      'unit_$name',
+      () => TextEditingController(text: unitPrice > 0 ? unitPrice.toStringAsFixed(0) : ''),
+    );
+    final totalController = _totalControllers.putIfAbsent(
+      'total_$name',
+      () => TextEditingController(text: amount > 0 ? amount.toStringAsFixed(0) : ''),
+    );
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(child: Text(name, style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary))),
-          if (widget.isPending)
-            SizedBox(
-              width: 80,
-              child: TextFormField(
-                initialValue: amount.toStringAsFixed(0),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
-                textAlign: TextAlign.right,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
-                decoration: InputDecoration(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  prefixText: '₹ ',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
-                ),
-                onChanged: (val) => onChanged(double.tryParse(val) ?? 0),
+          Expanded(
+            flex: 4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.textPrimary)),
+                if (qty > 0) ...[
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.blue.shade200, width: 0.8),
+                    ),
+                    child: Text(
+                      'Qty: $qty',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.blue.shade700),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (_isEffectivelyPending) ...[
+            if (_isCourier && qty > 0) ...[
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('Unit Price', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                  const SizedBox(height: 2),
+                  SizedBox(
+                    width: 90,
+                    child: TextFormField(
+                      controller: unitController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        prefixText: '₹ ',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
+                      ),
+                      onChanged: (val) {
+                        final parsed = double.tryParse(val) ?? 0;
+                        onUnitPriceChanged?.call(parsed);
+                        final newTotal = parsed * qty;
+                        totalController.text = newTotal > 0 ? newTotal.toStringAsFixed(0) : '';
+                      },
+                    ),
+                  ),
+                ],
               ),
-            )
-          else
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('Total', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                  const SizedBox(height: 2),
+                  SizedBox(
+                    width: 95,
+                    child: TextFormField(
+                      controller: totalController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        prefixText: '₹ ',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
+                      ),
+                      onChanged: (val) {
+                        final parsed = double.tryParse(val) ?? 0;
+                        onTotalChanged?.call(parsed);
+                        final newUnitPrice = qty > 0 ? parsed / qty : parsed;
+                        unitController.text = newUnitPrice > 0 ? newUnitPrice.toStringAsFixed(0) : '';
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              SizedBox(
+                width: 90,
+                child: TextFormField(
+                  controller: totalController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    prefixText: '₹ ',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide(color: AppTheme.primaryColor)),
+                  ),
+                  onChanged: (val) {
+                    final parsed = double.tryParse(val) ?? 0;
+                    onTotalChanged?.call(parsed);
+                  },
+                ),
+              ),
+            ],
+          ] else ...[
             Text(
               NumberFormat.currency(symbol: '₹', decimalDigits: 0).format(amount),
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
             ),
+          ],
         ],
       ),
     );

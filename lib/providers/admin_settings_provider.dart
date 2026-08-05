@@ -38,6 +38,9 @@ class AdminSettingsProvider with ChangeNotifier {
 
   // SLA / Overdue settings
   int get overdueMinutesThreshold => _getIntValue('overdue_minutes_threshold', defaultValue: 60);
+  
+  // Invoice editing settings
+  int get invoiceEditWindowMinutes => _getIntValue('invoice_edit_window_minutes', defaultValue: 30);
 
   bool _hasMetadataInSettings() {
     if (_settings.isEmpty) return false;

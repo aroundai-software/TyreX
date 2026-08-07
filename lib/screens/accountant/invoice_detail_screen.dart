@@ -765,13 +765,13 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
                     c,
                     onUnitPriceChanged: (newUnitPrice) => setState(() {
                       c['unit_price'] = newUnitPrice;
-                      final qty = ((c['qty'] ?? 1) as num);
+                      final qty = num.tryParse('${c['qty'] ?? c['count'] ?? 1}') ?? 1;
                       c['amount'] = newUnitPrice * qty;
                       _recalcTotals();
                     }),
                     onTotalChanged: (newTotal) => setState(() {
                       c['amount'] = newTotal;
-                      final qty = ((c['qty'] ?? 1) as num);
+                      final qty = num.tryParse('${c['qty'] ?? c['count'] ?? 1}') ?? 1;
                       if (qty > 0) {
                         c['unit_price'] = newTotal / qty;
                       } else {
@@ -1251,7 +1251,7 @@ class _InvoiceDetailScreenState extends State<InvoiceDetailScreen> {
     void Function(double)? onTotalChanged,
   }) {
     final String name = item['name'] ?? item['text'] ?? '-';
-    final int qty = (item['qty'] ?? item['count'] ?? 1) as int;
+    final int qty = int.tryParse('${item['qty'] ?? item['count'] ?? 1}') ?? 1;
     final double unitPrice = ((item['unit_price'] ?? item['amount'] ?? 0) as num).toDouble();
     final double amount = ((item['amount'] ?? 0) as num).toDouble();
 

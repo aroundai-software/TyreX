@@ -117,7 +117,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final _courierPhoneController = TextEditingController();
   final _courierAddressController = TextEditingController();
   final _courierGstController = TextEditingController();
-  final List<XFile> _courierPhotos = [];
+  final List<dynamic> _courierPhotos = [];
   String? _courierTyreBrand;
   String? _courierTyreModel;
   String? _courierTyreSize;
@@ -138,7 +138,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
     setState(() {
       if (_editingCourierProductIndex != null) {
-        final existingImages = _courierProductsList[_editingCourierProductIndex!]['qr_images'] as List<Uint8List>? ?? [];
+        final existingImages = _courierProductsList[_editingCourierProductIndex!]['qr_images'] as List<dynamic>? ?? [];
         _courierProductsList[_editingCourierProductIndex!] = {
           'brand': _courierTyreBrand,
           'model': _courierTyreModel,
@@ -167,7 +167,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
             'name': '$_courierTyreBrand $_courierTyreModel - $_courierTyreSize',
             'price': price,
             'qty': qty,
-            'qr_images': <Uint8List>[], 
+            'qr_images': <dynamic>[], 
           });
         }
       }
@@ -211,7 +211,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   Future<void> _scanCourierProductQR(int index) async {
     final qty = _courierProductsList[index]['qty'] as int;
-    final currentPhotos = _courierProductsList[index]['qr_images'] as List<Uint8List>? ?? [];
+    final currentPhotos = _courierProductsList[index]['qr_images'] as List<dynamic>? ?? [];
     
     int remaining = qty - currentPhotos.length;
     if (remaining <= 0) {
@@ -229,7 +229,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     );
 
     if (result != null && result is Map) {
-      List<Uint8List> images = List<Uint8List>.from(currentPhotos);
+      List<dynamic> images = List<dynamic>.from(currentPhotos);
       for (var file in result.values) {
         try {
           images.add(await file.readAsBytes());
@@ -247,8 +247,8 @@ class _JobCardScreenState extends State<JobCardScreen> {
     showDialog(
       context: context,
       builder: (context) {
-        final images = _courierProductsList[productIndex]['qr_images'] as List<Uint8List>;
-        final imageBytes = images[photoIndex];
+        final images = _courierProductsList[productIndex]['qr_images'] as List<dynamic>;
+        final imageItem = images[photoIndex];
         return Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.all(16),
@@ -259,7 +259,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                 alignment: Alignment.topRight,
                 children: [
                   InteractiveViewer(
-                    child: Image.memory(imageBytes, fit: BoxFit.contain),
+                    child: imageItem is String ? Image.network(imageItem, fit: BoxFit.contain) : Image.memory(imageItem as Uint8List, fit: BoxFit.contain),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white, size: 30),
@@ -364,14 +364,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
   final List<Offset> _damageMarks = [];
   
   // Media & Barcode
-  final Map<String, XFile> _wheelPhotos = {};
-  final List<XFile> _vehiclePhotos = [];
-  XFile? _odometerPhoto;
+  final Map<String, dynamic> _wheelPhotos = {};
+  final List<dynamic> _vehiclePhotos = [];
+  dynamic _odometerPhoto;
   
   // Tyre Warranty Details
   final Map<String, TextEditingController> _tyreQRControllers = {};
   final Map<String, TextEditingController> _tyreSpecControllers = {};
-  final Map<String, Uint8List> _tyreQRImages = {};
+  final Map<String, dynamic> _tyreQRImages = {};
   
   final List<String> _requiredWheels = [
     'Front Left',
@@ -446,7 +446,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
               'name': p['name'],
               'price': double.tryParse(p['price'].toString()) ?? 0.0,
               'qty': p['qty'],
-              'qr_images': <Uint8List>[],
+              'qr_images': <dynamic>[],
             });
           }
         }
@@ -470,16 +470,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
     } else if (photoUrlsRaw is List) {
       urls = List<String>.from(photoUrlsRaw.map((e) => e.toString()));
     }
-    
-    final dir = await getTemporaryDirectory();
 
     for (String url in urls) {
       try {
-        final response = await http.get(Uri.parse(url));
-        if (response.statusCode != 200) continue;
-        final bytes = response.bodyBytes;
-        final ts = DateTime.now().millisecondsSinceEpoch;
-
         // ─────────────── COURIER MEDIA ───────────────
         if (url.contains('_tyreqr_product_')) {
           // Format: job_{id}_tyreqr_product_{i}_qr_{j}_{timestamp}.jpg
@@ -489,7 +482,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
             if (productIndex < _courierProductsList.length) {
               if (mounted) {
                 setState(() {
-                  (_courierProductsList[productIndex]['qr_images'] as List<Uint8List>).add(bytes);
+                  (_courierProductsList[productIndex]['qr_images'] as List<dynamic>).add(url);
                 });
               }
             }
@@ -510,7 +503,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
             );
             if (mounted) {
               setState(() {
-                _tyreQRImages[position] = bytes;
+                _tyreQRImages[position] = url;
               });
             }
           }
@@ -525,11 +518,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
               (w) => w.replaceAll(' ', '_') == rawPos,
               orElse: () => rawPos.replaceAll('_', ' '),
             );
-            final file = File('${dir.path}/draft_wheel_${rawPos}_$ts.jpg');
-            await file.writeAsBytes(bytes);
             if (mounted) {
               setState(() {
-                _wheelPhotos[position] = XFile(file.path);
+                _wheelPhotos[position] = url;
               });
             }
           }
@@ -537,14 +528,12 @@ class _JobCardScreenState extends State<JobCardScreen> {
         // ─────────────── VEHICLE / PACKAGE PHOTOS ───────────────
         // Format: job_{id}_vehicle_{i}_{timestamp}.jpg  (vehicle) or courier package
         } else if (url.contains('_vehicle_')) {
-          final file = File('${dir.path}/draft_vehicle_$ts.jpg');
-          await file.writeAsBytes(bytes);
           if (mounted) {
             setState(() {
               if (_isCourierMode) {
-                _courierPhotos.add(XFile(file.path));
+                _courierPhotos.add(url);
               } else {
-                _vehiclePhotos.add(XFile(file.path));
+                _vehiclePhotos.add(url);
               }
             });
           }
@@ -552,16 +541,14 @@ class _JobCardScreenState extends State<JobCardScreen> {
         // ─────────────── ODOMETER PHOTO ───────────────
         // Format: job_{id}_odometer_{timestamp}.jpg
         } else if (url.contains('_odometer_')) {
-          final file = File('${dir.path}/draft_odometer_$ts.jpg');
-          await file.writeAsBytes(bytes);
           if (mounted) {
             setState(() {
-              _odometerPhoto = XFile(file.path);
+              _odometerPhoto = url;
             });
           }
         }
       } catch (e) {
-        debugPrint('Error downloading draft media $url: $e');
+        debugPrint('Error assigning draft media $url: $e');
       }
     }
   }
@@ -1437,34 +1424,38 @@ class _JobCardScreenState extends State<JobCardScreen> {
 
   Future<void> _uploadMediaInBackground({
     required int jobId,
-    required Map<String, XFile> wheelPhotos,
-    required List<XFile> vehiclePhotos,
-    required Map<String, Uint8List> tyreQRImages,
-    required XFile? odometerPhoto,
+    required Map<String, dynamic> wheelPhotos,
+    required List<dynamic> vehiclePhotos,
+    required Map<String, dynamic> tyreQRImages,
+    required dynamic odometerPhoto,
   }) async {
     List<String> uploadedUrls = [];
     List<Future<String?>> uploadTasks = [];
 
     for (final entry in wheelPhotos.entries) {
+      if (entry.value is String) continue;
       final position = entry.key;
-      final photoXFile = entry.value;
+      final photoXFile = entry.value as XFile;
       final fileName = 'job_${jobId}_wheel_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg';
       uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, fileName)));
     }
     
     for (int i = 0; i < vehiclePhotos.length; i++) {
-      final photoXFile = vehiclePhotos[i];
+      if (vehiclePhotos[i] is String) continue;
+      final photoXFile = vehiclePhotos[i] as XFile;
       uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_vehicle_${i}_${DateTime.now().millisecondsSinceEpoch}.jpg')));
     }
     
     for (final entry in tyreQRImages.entries) {
+      if (entry.value is String) continue;
       final position = entry.key;
-      final imageBytes = entry.value;
+      final imageBytes = entry.value as Uint8List;
       uploadTasks.add(SupabaseService().uploadJobMedia(imageBytes, 'job_${jobId}_tyreqr_${position.replaceAll(" ", "_")}_${DateTime.now().millisecondsSinceEpoch}.jpg'));
     }
 
-    if (odometerPhoto != null) {
-      uploadTasks.add(odometerPhoto.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg')));
+    if (odometerPhoto != null && odometerPhoto is! String) {
+      final photoXFile = odometerPhoto as XFile;
+      uploadTasks.add(photoXFile.readAsBytes().then((bytes) => SupabaseService().uploadJobMedia(bytes, 'job_${jobId}_odometer_${DateTime.now().millisecondsSinceEpoch}.jpg')));
     }
     
     final results = await Future.wait(uploadTasks);
@@ -1832,7 +1823,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     }
   }
 
-  Widget _buildPhotoSlot(String label, XFile? photo, VoidCallback onTap, VoidCallback onRemove) {
+  Widget _buildPhotoSlot(String label, dynamic photo, VoidCallback onTap, VoidCallback onRemove) {
     return Column(
       children: [
         Expanded(
@@ -1851,7 +1842,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     ? const Icon(Icons.add_a_photo, color: Colors.grey, size: 30)
                     : ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Image.file(File(photo.path), fit: BoxFit.cover),
+                        child: photo is String ? Image.network(photo, fit: BoxFit.cover) : Image.file(File(photo.path), fit: BoxFit.cover),
                       ),
               ),
             ),
@@ -2028,8 +2019,13 @@ class _JobCardScreenState extends State<JobCardScreen> {
           Row(
             children: [
               if (_tyreQRImages[wheel] != null)
-                Image.memory(
-                  _tyreQRImages[wheel]!,
+                _tyreQRImages[wheel] is String ? Image.network(
+                  _tyreQRImages[wheel],
+                  height: 80,
+                  width: 80,
+                  fit: BoxFit.cover,
+                ) : Image.memory(
+                  _tyreQRImages[wheel] as Uint8List,
                   height: 80,
                   width: 80,
                   fit: BoxFit.cover,
@@ -2561,8 +2557,11 @@ class _JobCardScreenState extends State<JobCardScreen> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.file(
-                        File(_odometerPhoto!.path),
+                      child: _odometerPhoto is String ? Image.network(
+                        _odometerPhoto,
+                        fit: BoxFit.cover,
+                      ) : Image.file(
+                        File(_odometerPhoto.path),
                         fit: BoxFit.cover,
                       ),
                     ),
@@ -3522,7 +3521,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                           const SizedBox(height: 8),
                           Builder(
                             builder: (context) {
-                                  final qrImages = product['qr_images'] as List<Uint8List>? ?? [];
+                                  final qrImages = product['qr_images'] as List<dynamic>? ?? [];
                                   final qty = product['qty'] as int;
                                   
                                   if (qrImages.isEmpty) {
@@ -3550,7 +3549,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                                                     onTap: () => _viewCourierQR(index, i),
                                                     child: ClipRRect(
                                                       borderRadius: BorderRadius.circular(4),
-                                                      child: Image.memory(qrImages[i], height: 40, width: 40, fit: BoxFit.cover),
+                                                      child: qrImages[i] is String ? Image.network(qrImages[i], height: 40, width: 40, fit: BoxFit.cover) : Image.memory(qrImages[i] as Uint8List, height: 40, width: 40, fit: BoxFit.cover),
                                                     ),
                                                   ),
                                                 );
@@ -3769,7 +3768,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                             onTap: () => _viewCourierPackagePhoto(i),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
-                              child: Image.file(File(_courierPhotos[i].path), width: 100, height: 100, fit: BoxFit.cover),
+                              child: _courierPhotos[i] is String ? Image.network(_courierPhotos[i], width: 100, height: 100, fit: BoxFit.cover) : Image.file(File(_courierPhotos[i].path), width: 100, height: 100, fit: BoxFit.cover),
                             ),
                           ),
                           Positioned(
@@ -3834,7 +3833,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
     showDialog(
       context: context,
       builder: (context) {
-        final imageFile = File(_courierPhotos[photoIndex].path);
+        final item = _courierPhotos[photoIndex];
         return Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.all(16),
@@ -3845,7 +3844,7 @@ class _JobCardScreenState extends State<JobCardScreen> {
                 alignment: Alignment.topRight,
                 children: [
                   InteractiveViewer(
-                    child: Image.file(imageFile, fit: BoxFit.contain),
+                    child: item is String ? Image.network(item, fit: BoxFit.contain) : Image.file(File(item.path), fit: BoxFit.contain),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close, color: Colors.white, size: 30),
@@ -3944,9 +3943,9 @@ class _JobCardScreenState extends State<JobCardScreen> {
         jobId = inserted['id'] as int;
       }
 
-      Map<String, Uint8List> productQRs = {};
+      Map<String, dynamic> productQRs = {};
       for (int i = 0; i < _courierProductsList.length; i++) {
-        final images = _courierProductsList[i]['qr_images'] as List<Uint8List>? ?? [];
+        final images = _courierProductsList[i]['qr_images'] as List<dynamic>? ?? [];
         for (int j = 0; j < images.length; j++) {
           productQRs['product_${i}_qr_$j'] = images[j];
         }

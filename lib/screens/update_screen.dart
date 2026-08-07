@@ -797,6 +797,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
 
     // Prepare data early for validation
     final updatedComplaints = _originalComplaints.map((c) => {
+      ...c,
       'text': c['text'],
       'amount': double.tryParse(_complaintControllers[c['text']]?.text ?? '0') ?? 0,
       'type': AppConstants.typeComplaint
@@ -925,6 +926,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final c = entry.value;
       final complaintKey = 'complaint_$index';
       return {
+        ...c,
         'text': c['text'],
         'amount': double.tryParse(_complaintControllers[c['text']]?.text ?? '0') ?? 0,
         'type': AppConstants.typeComplaint,
@@ -1044,6 +1046,7 @@ class _UpdateScreenState extends State<UpdateScreen> with SingleTickerProviderSt
       final c = entry.value;
       final complaintKey = 'complaint_$index';
       return {
+        ...c,
         'text': c['text'],
         'amount': double.tryParse(_complaintControllers[c['text']]?.text ?? '0') ?? 0,
         'type': AppConstants.typeComplaint,
